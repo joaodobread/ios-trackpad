@@ -72,6 +72,7 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if ch.isNotifying {
             print("● Bluetooth conectado: \(p.name ?? "iPhone")")
             onStatus(p.name ?? "iPhone")
+            reply(hostHello, to: p)
         } else if error != nil {
             central.cancelPeripheralConnection(p)
         }
@@ -81,17 +82,19 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let d = ch.value, let s = String(data: d, encoding: .utf8) else { return }
         buffer += s
         while let i = buffer.firstIndex(of: "\n") {
-            handle(String(buffer[..<i]), owner: "ble") { [weak self] r in
-                guard let self, let ch = self.replies, self.peripheral === p else { return }
-                let data = Data((r + "\n").utf8)
-                let max = p.maximumWriteValueLength(for: .withResponse)
-                var off = 0
-                while off < data.count {
-                    p.writeValue(data.subdata(in: off..<min(off + max, data.count)), for: ch, type: .withResponse)
-                    off += max
-                }
-            }
+            handle(String(buffer[..<i]), owner: "ble") { [weak self] r in self?.reply(r, to: p) }
             buffer.removeSubrange(...i)
+        }
+    }
+
+    private func reply(_ r: String, to p: CBPeripheral) {
+        guard let ch = replies, peripheral === p else { return }
+        let data = Data((r + "\n").utf8)
+        let max = p.maximumWriteValueLength(for: .withResponse)
+        var off = 0
+        while off < data.count {
+            p.writeValue(data.subdata(in: off..<min(off + max, data.count)), for: ch, type: .withResponse)
+            off += max
         }
     }
 }

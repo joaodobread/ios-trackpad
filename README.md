@@ -58,6 +58,8 @@ echo 'TEAM=SEU_TEAM_ID' > ios/local.env   # uma vez; ID em Xcode › Ajustes ›
 
 Bluetooth: na primeira conexão o iPhone e o Mac pedem para parear (a característica GATT exige criptografia).
 
+**Vários computadores:** cada computador se apresenta ao conectar, e o topo da tela mostra qual está ativo e se é Mac ou Linux (ex.: "Bluetooth · Linux · pc-sala"). Com mais de um conectado por Bluetooth, todos ficam pareados ao mesmo tempo e só o escolhido recebe os comandos: toque no status no topo (ou em Ajustes › Conexão) para trocar. O iPhone lembra a escolha. O cabo sempre tem prioridade. Gestos e ações têm configuração separada para Mac e Linux e seguem o computador ativo. No Linux, o nome mostrado é o hostname (ou `TRACEPAD_NAME`).
+
 Dica: para bloquear de vez a barra de Início, a Central de Controle e as notificações enquanto usa, ative o **Acesso Guiado** (Ajustes › Acessibilidade) e clique três vezes no botão lateral com o TracePad aberto.
 
 ## Gestos
@@ -71,7 +73,7 @@ Dica: para bloquear de vez a barra de Início, a Central de Controle e as notifi
 
 ### Gestos configuráveis
 
-Em Ajustes › **Gestos**, cada gesto de 3 e 4 dedos (↑ ↓ ← → e toque) e a pinça pode ficar no **Padrão**, em **Nada** ou virar uma ação **Personalizada** (atalho, texto, abrir ou comando, como no modo Ações).
+Em Ajustes › **Gestos** (separado para Mac e Linux), cada gesto de 3 e 4 dedos (↑ ↓ ← → e toque) e a pinça pode ficar no **Padrão**, em **Nada** ou virar uma ação **Personalizada** (atalho, texto, abrir ou comando, como no modo Ações).
 
 No Padrão, o iPhone manda só o nome do gesto e o computador decide o que fazer. Para mudar isso no próprio computador (vale também para o PWA), use `~/.tracepad-actions`:
 
@@ -96,7 +98,7 @@ Troque em Ajustes › Modo:
 - **Trackpad** — o padrão.
 - **Monitor** — CPU, GPU, memória e disco em medidores, rede, bateria, histórico de CPU e processos que mais consomem (atualiza a cada 1 s).
 - **Apps** — apps abertos em ordem alfabética, estilo ⌘-Tab. Toque para trazer para frente; apps com várias janelas mostram um número e abrem a lista para escolher a janela. Segure para ocultar ou encerrar. O bloco **+ Abrir app** lista os apps instalados no Mac, com busca.
-- **Ações** — grade de botões seus: **atalho** de teclado, **texto** pronto, **abrir** URL ou app, ou **comando** de shell. Toque em **+ Nova ação**; segure um botão para editar, mover ou excluir.
+- **Ações** — grade de botões seus (cada um para todos os computadores, só Mac ou só Linux): **atalho** de teclado, **texto** pronto, **abrir** URL ou app, ou **comando** de shell. Toque em **+ Nova ação**; segure um botão para editar, mover ou excluir.
 
 Comandos de shell ficam no computador, em `~/.tracepad-actions` (o iPhone só chama pelo nome, nunca envia o comando):
 
@@ -110,7 +112,7 @@ No Mac, abra pelo menu do TracePad › **Editar ações de shell…**. O arquivo
 
 ## Protocolo
 
-Linhas de texto, iguais em todos os transportes, nos dois sentidos (lista completa em `mac/Input.swift`): `m dx dy`, `c l|r|m [mods]`, `d`/`u`, `s fase momentum dx dy`, `k código [mods]`, `t texto`, volume/brilho/mídia, assinatura de monitor/apps (`w s|a|0`), controle de apps e janelas, ações (`C` lista os comandos de shell, `r nome` roda, `O alvo` abre URL/app) e gestos padrão por nome (`g mission`).
+Linhas de texto, iguais em todos os transportes, nos dois sentidos (lista completa em `mac/Input.swift`): `m dx dy`, `c l|r|m [mods]`, `d`/`u`, `s fase momentum dx dy`, `k código [mods]`, `t texto`, volume/brilho/mídia, assinatura de monitor/apps (`w s|a|0`), controle de apps e janelas, ações (`C` lista os comandos de shell, `r nome` roda, `O alvo` abre URL/app) gestos padrão por nome (`g mission`) e apresentação do computador (`?` → `H mac|linux nome`, enviada também ao conectar).
 
 - USB: iPhone escuta em `localhost:2345`; o Mac conecta pelo usbmuxd.
 - BLE: serviço `6E7A0001-…`, característica de notify `6E7A0002-…`.

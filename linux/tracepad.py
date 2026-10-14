@@ -101,6 +101,9 @@ def read_pin():
 
 PIN = read_pin()
 
+# apresentação deste computador: o iPhone mostra o tipo e escolhe entre vários no Bluetooth
+HELLO = "H linux " + clean(os.environ.get("TRACEPAD_NAME") or socket.gethostname() or "Linux")
+
 # MARK: - Injeção de eventos (uinput)
 
 try:
@@ -852,6 +855,8 @@ def _handle(msg, owner, reply):
         inp.key(int(d(1)), s(2))
     elif op == "p":
         reply(msg)
+    elif op == "?":
+        reply(HELLO)
     elif op == "v":
         system.set_volume(d(1))
     elif op == "b":
@@ -997,6 +1002,8 @@ class USBLink:
             except OSError:
                 pass
 
+        reply(HELLO)
+
         buf = b""
         try:
             while True:
@@ -1050,6 +1057,7 @@ async def ble_loop():
                     await client.pair()
                     await client.start_notify(BLE_COMMANDS, on_data)
                 log("● Bluetooth conectado: %s" % (dev.name or "iPhone"))
+                out.put_nowait(HELLO)
 
                 async def writer():
                     while True:

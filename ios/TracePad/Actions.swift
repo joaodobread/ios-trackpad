@@ -26,6 +26,8 @@ struct CustomAction: Codable, Identifiable, Equatable {
     var value: String
     /// modificadores do atalho: c=⌘ a=⌥ t=⌃ s=⇧ w=Super (no Mac, igual a ⌘)
     var mods = ""
+    /// "mac", "linux" ou nil (todos): a grade mostra só as do computador conectado
+    var os: String? = nil
 
     /// Linha do protocolo enviada ao computador.
     var command: String? {
@@ -127,7 +129,7 @@ struct ActionsView: View {
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 12)], spacing: 12) {
-                ForEach(store.items) { a in tile(a) }
+                ForEach(store.items.filter { $0.os == nil || link.transport == .none || $0.os == GestureStore.currentOS }) { a in tile(a) }
                 addTile
             }
             .padding(.horizontal, 20)
@@ -199,6 +201,11 @@ private struct ActionEditor: View {
             Form {
                 Section {
                     TextField("Nome", text: $action.name)
+                    Picker("Computador", selection: $action.os) {
+                        Text("Todos").tag(String?.none)
+                        Text("Só Mac").tag(String?.some("mac"))
+                        Text("Só Linux").tag(String?.some("linux"))
+                    }
                     ScrollView(.horizontal) {
                         HStack(spacing: 10) {
                             ForEach(actionColors, id: \.self) { c in

@@ -25,8 +25,17 @@ struct SettingsView: View {
 
                 Section("Conexão") {
                     LabeledContent("Status", value: link.transport.rawValue)
+                    if link.transport != .none {
+                        LabeledContent("Computador", value: [link.hostOS == "linux" ? "Linux" : "Mac", link.hostName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    }
+                    if link.peers.count > 1 {
+                        Picker("Bluetooth", selection: Binding(get: { link.activePeer ?? link.peers[0].id }, set: { link.select($0) })) {
+                            ForEach(link.peers) { p in Text(p.label + (p.os == "linux" ? " (Linux)" : p.os == "mac" ? " (Mac)" : "")).tag(p.id) }
+                        }
+                        .disabled(link.transport == .usb)
+                    }
                     if link.bluetoothOff { Text("Bluetooth desligado ou sem permissão.").foregroundStyle(.orange) }
-                    Text("USB: conecte o cabo com o TracePad aberto no Mac. Bluetooth: conecta sozinho quando os dois estão abertos (na primeira vez o iPhone e o Mac pedem para parear).")
+                    Text("USB: conecte o cabo com o TracePad aberto no Mac. Bluetooth: conecta sozinho quando os dois estão abertos (na primeira vez o iPhone e o computador pedem para parear). Com vários computadores no Bluetooth, escolha qual controlar aqui ou tocando no status no topo; o cabo sempre tem prioridade.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
 

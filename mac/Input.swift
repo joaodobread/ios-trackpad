@@ -147,6 +147,9 @@ final class Input {
 
 let input = Input()
 
+/// Apresentação deste computador: "H mac nome".
+let hostHello = "H mac " + clean(Host.current().localizedName ?? "Mac")
+
 // MARK: - Protocolo (texto, 1 comando por mensagem/linha)
 //   m dx dy            mover
 //   c l|r|m [mods]     clique (contagem de duplo/triplo clique feita aqui)
@@ -157,6 +160,7 @@ let input = Input()
 //                      redefinível em ~/.tracepad-actions com "@nome = atalho ou comando"
 //   t texto            digitar texto unicode
 //   p x                ping (eco)
+//   ?                  quem é você → "H mac nome" (também enviado ao conectar; o iPhone escolhe o computador no Bluetooth)
 //   v 0..1 / b 0..1    volume / brilho
 //   z                  alterna mudo
 //   x tecla            tecla de mídia (16 play/pause, 17 próxima, 18 anterior)
@@ -195,6 +199,7 @@ func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void
     case "s": input.scroll(phase: Int64(d(1)), momentum: Int64(d(2)), dx: Int32(d(3)), dy: Int32(d(4)))
     case "k": input.key(CGKeyCode(d(1)), mods: s(2))
     case "p": reply(msg)
+    case "?": reply(hostHello)
     case "v": SystemControls.setVolume(Float(d(1)))
     case "b": SystemControls.setBrightness(Float(d(1)))
     case "z": SystemControls.setMuted(!SystemControls.muted); reply(SystemControls.state)

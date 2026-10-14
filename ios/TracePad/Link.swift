@@ -32,6 +32,14 @@ struct InstalledApp: Identifiable {
     let name: String, running: Bool
 }
 
+/// Computador conectado por Bluetooth (vários podem estar assinados; só o escolhido recebe os comandos).
+struct Peer: Identifiable {
+    let id: UUID
+    var os: String?
+    var name: String?
+    var label: String { name ?? (os == "linux" ? "Linux" : os == "mac" ? "Mac" : "Computador") }
+}
+
 struct MacWindow: Identifiable {
     let id: Int // índice
     let title: String, minimized: Bool
@@ -63,10 +71,23 @@ final class Link: NSObject, ObservableObject {
     @Published private(set) var windows: (pid: Int, list: [MacWindow])?
     /// ações de shell definidas no computador ("C"), chamadas pelo nome
     @Published private(set) var commands = [String]()
+    /// computadores no Bluetooth, na ordem em que conectaram
+    @Published private(set) var peers = [Peer]()
+    /// sistema ("mac"/"linux") e nome do computador ativo, anunciados por ele ("H so nome")
+    @Published private(set) var hostOS: String?
+    @Published private(set) var hostName: String?
+    /// central do Bluetooth que recebe os comandos (nil fora do Bluetooth)
+    @Published private(set) var activePeer: UUID?
+    private var peerInfo = [UUID: (os: String, name: String)]()
+    private var usbHost: (os: String, name: String)?
+    /// computador escolhido para o Bluetooth (lembrado entre aberturas)
+    private var preferred = UserDefaults.standard.string(forKey: "peer").flatMap(UUID.init)
+    /// "usb" ou o UUID da central ativa; mudou = outro computador, dados dele são recarregados
+    private var activeKey: String?
+    private var inboxes = [String: String]()
     private var iconRequested = Set<String>()
     /// dados contínuos assinados no Mac ("s" monitor, "a" apps, "0" nada); reenviado a cada reconexão
     private var subscription: Character = "0"
-    private var inbox = ""
 
     private var listener: NWListener?
     private var usb: NWConnection?
@@ -124,7 +145,7 @@ final class Link: NSObject, ObservableObject {
             usb.send(content: Data((c.text + "\n").utf8), completion: .idempotent)
             return
         }
-        guard characteristic != nil, !subscribers.isEmpty else { return }
+        guard characteristic != nil, activeCentral != nil else { return }
         // com a fila congestionada, movimentos consecutivos viram um só (e volume/brilho, só o último valor)
         if case .move(let x, let y) = c, case .move(let px, let py)? = queue.last {
             queue[queue.count - 1] = .move(px + x, py + y)
@@ -138,8 +159,8 @@ final class Link: NSObject, ObservableObject {
     }
 
     private func pump() {
-        guard let ch = characteristic else { return }
-        let maxLen = subscribers.map(\.maximumUpdateValueLength).min() ?? 20
+        guard let ch = characteristic, let central = activeCentral else { return }
+        let maxLen = central.maximumUpdateValueLength
         while !queue.isEmpty {
             var packet = ""
             var n = 0
@@ -149,7 +170,7 @@ final class Link: NSObject, ObservableObject {
                 packet += t
                 n += 1
             }
-            guard pm.updateValue(Data(packet.utf8), for: ch, onSubscribedCentrals: nil) else { return }
+            guard pm.updateValue(Data(packet.utf8), for: ch, onSubscribedCentrals: [central]) else { return }
             queue.removeFirst(n)
         }
     }
@@ -159,14 +180,65 @@ final class Link: NSObject, ObservableObject {
         send("w \(kind)")
     }
 
+    private var activeCentral: CBCentral? {
+        subscribers.first { $0.identifier == preferred } ?? subscribers.first
+    }
+
+    /// Escolhe o computador do Bluetooth.
+    func select(_ id: UUID) {
+        guard id != activeCentral?.identifier, subscribers.contains(where: { $0.identifier == id }) else { return }
+        preferred = id
+        UserDefaults.standard.set(id.uuidString, forKey: "peer")
+        queue.removeAll()
+        update()
+    }
+
+    /// Manda direto para uma central específica (fora da fila do computador ativo).
+    private func direct(_ s: String, to c: CBCentral) {
+        guard let ch = characteristic else { return }
+        pm.updateValue(Data(s.utf8), for: ch, onSubscribedCentrals: [c])
+    }
+
     private func update() {
-        let t: Transport = usb?.state == .ready ? .usb : subscribers.isEmpty ? .none : .ble
-        if t != transport {
-            transport = t
-            if t == .none { iconRequested.removeAll(); installedRequested.removeAll() }
-            if t != .none, subscription != "0" { DispatchQueue.main.async { self.send("w \(self.subscription)") } }
+        let central = activeCentral
+        let t: Transport = usb?.state == .ready ? .usb : central == nil ? .none : .ble
+        if t != transport { transport = t }
+        let key = t == .usb ? "usb" : central?.identifier.uuidString
+        let host = t == .usb ? usbHost : central.flatMap { peerInfo[$0.identifier] }
+        if hostOS != host?.os { hostOS = host?.os }
+        if hostName != host?.name { hostName = host?.name }
+        let ap = t == .ble ? central?.identifier : nil
+        if activePeer != ap { activePeer = ap }
+        peers = subscribers.map { Peer(id: $0.identifier, os: peerInfo[$0.identifier]?.os, name: peerInfo[$0.identifier]?.name) }
+        if key != activeKey {
+            // o computador que deixou de ser o ativo (e continua no Bluetooth) solta o arrasto e para de mandar dados
+            if let old = activeKey, let c = subscribers.first(where: { $0.identifier.uuidString == old }) { direct("u\nw 0\n", to: c) }
+            activeKey = key
+            resetHostData()
+            if key != nil {
+                DispatchQueue.main.async {
+                    self.send("?") // pede "H so nome" (hosts antigos ignoram)
+                    if self.subscription != "0" { self.send("w \(self.subscription)") }
+                    self.send("C")
+                }
+            }
         }
         if t != .ble { queue.removeAll() }
+    }
+
+    /// Outro computador: nada do anterior vale (apps, ícones, monitor, comandos).
+    private func resetHostData() {
+        stats = nil
+        cpuHistory = []
+        processes = []
+        apps = []
+        icons = [:]
+        installed = []
+        installedIcons = [:]
+        windows = nil
+        commands = []
+        iconRequested.removeAll()
+        installedRequested.removeAll()
     }
 
     // MARK: USB
@@ -196,7 +268,7 @@ final class Link: NSObject, ObservableObject {
             guard let self, let c, self.usb === c else { return }
             switch st {
             case .ready: self.update()
-            case .failed, .cancelled: self.usb = nil; self.update()
+            case .failed, .cancelled: self.usb = nil; self.usbHost = nil; self.inboxes["usb"] = nil; self.update()
             default: break
             }
         }
@@ -213,12 +285,15 @@ final class Link: NSObject, ObservableObject {
         }
     }
 
-    private func received(_ data: Data) {
-        inbox += String(decoding: data, as: UTF8.self)
+    /// src: "usb" ou o UUID da central. Só o computador ativo é ouvido (fora o "H" de apresentação).
+    private func received(_ data: Data, from src: String = "usb") {
+        var inbox = inboxes[src, default: ""] + String(decoding: data, as: UTF8.self)
+        defer { inboxes[src] = inbox }
         while let i = inbox.firstIndex(of: "\n") {
             let line = inbox[..<i]
             inbox.removeSubrange(...i)
-            guard let op = line.first else { continue }
+            if line.hasPrefix("H ") { hello(line.dropFirst(2), from: src); continue }
+            guard src == activeKey, let op = line.first else { continue }
             let body = line.dropFirst(2)
             switch op {
             case "S": parseState(body)
@@ -233,6 +308,15 @@ final class Link: NSObject, ObservableObject {
             default: break
             }
         }
+    }
+
+    /// "H so nome"
+    private func hello(_ body: Substring, from src: String) {
+        let a = body.split(separator: " ", maxSplits: 1)
+        guard let os = a.first else { return }
+        let info = (os: String(os), name: a.count > 1 ? String(a[1]) : "")
+        if src == "usb" { usbHost = info } else if let id = UUID(uuidString: src) { peerInfo[id] = info }
+        update()
     }
 
     private func parseState(_ body: Substring) {
@@ -348,18 +432,21 @@ extension Link: CBPeripheralManagerDelegate {
     func peripheralManager(_ p: CBPeripheralManager, central: CBCentral, didSubscribeTo ch: CBCharacteristic) {
         if !subscribers.contains(where: { $0.identifier == central.identifier }) { subscribers.append(central) }
         p.setDesiredConnectionLatency(.low, for: central)
+        direct("?\n", to: central) // quem é você? (vale também para os que não estão ativos)
         update()
     }
 
     func peripheralManager(_ p: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom ch: CBCharacteristic) {
         subscribers.removeAll { $0.identifier == central.identifier }
+        peerInfo[central.identifier] = nil
+        inboxes[central.identifier.uuidString] = nil
         update()
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers p: CBPeripheralManager) { pump() }
 
     func peripheralManager(_ p: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        for r in requests { if let v = r.value { received(v) } }
+        for r in requests { if let v = r.value { received(v, from: r.central.identifier.uuidString) } }
         if let first = requests.first { p.respond(to: first, withResult: .success) }
     }
 }
@@ -369,6 +456,7 @@ extension Link {
     /// Dados fictícios para conferir os modos no simulador: TP_DEMO=1
     fileprivate func demo(_: String) {
         transport = .usb
+        activeKey = "usb"
         let u = "\u{1f}"
         received(Data(("S 0.58 0.5 0\n" +
             "A 1\(u)1\(u)0\(u)Safari\(u)a\(u)1\t2\(u)0\(u)0\(u)Xcode\(u)b\(u)3\t3\(u)0\(u)0\(u)Finder\(u)c\t4\(u)0\(u)1\(u)Spotify\(u)d\t5\(u)0\(u)0\(u)Slack\(u)e\t6\(u)0\(u)0\(u)Terminal\(u)f\n").utf8))

@@ -113,6 +113,7 @@ final class USBLink {
                 if Mux.send(fd, ["MessageType": "Connect", "DeviceID": id, "PortNumber": Int(USB_DEVICE_PORT.bigEndian)]),
                    let r = Mux.read(fd), r["Number"] as? Int == 0 {
                     setConnected(id, true)
+                    _ = Mux.writeAll(fd, Data((hostHello + "\n").utf8))
                     let owner = "usb-\(id)-\(UUID().uuidString)"
                     readLines(fd, owner: owner)
                     DispatchQueue.main.sync { Hub.shared.drop(owner: owner) } // antes de fechar o fd

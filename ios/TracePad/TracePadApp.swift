@@ -44,12 +44,7 @@ struct ContentView: View {
 
             VStack {
                 HStack(spacing: 4) {
-                    HStack(spacing: 6) {
-                        Circle().fill(link.transport == .none ? Color.red : .green).frame(width: 8, height: 8)
-                        Text(link.transport.rawValue).font(.caption)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    hostPill
                     Spacer()
                     toolButton("sun.max") { drawer.toggle() }
                     if s.mode == "trackpad" {
@@ -110,6 +105,34 @@ struct ContentView: View {
         KeyboardHost(active: $keyboard).frame(width: 0, height: 0)
     }
 
+    /// Transporte e computador ativo. Com mais de um no Bluetooth, vira menu para escolher.
+    @ViewBuilder private var hostPill: some View {
+        let pill = HStack(spacing: 6) {
+            Circle().fill(link.transport == .none ? Color.red : .green).frame(width: 8, height: 8)
+            Text(link.transport == .none ? link.transport.rawValue : "\(link.transport.rawValue) · \(hostLabel)").font(.caption).lineLimit(1)
+            if link.transport == .ble, link.peers.count > 1 { Image(systemName: "chevron.down").font(.caption2.weight(.semibold)) }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        if link.transport == .ble, link.peers.count > 1 {
+            Menu {
+                PeerPicker()
+            } label: { pill }
+            .foregroundStyle(.white)
+        } else {
+            pill
+        }
+    }
+
+    private var hostLabel: String {
+        let os = link.hostOS == "linux" ? "Linux" : link.hostOS == "mac" ? "Mac" : nil
+        switch (os, link.hostName) {
+        case let (os?, name?) where !name.isEmpty: return "\(os) · \(name)"
+        case let (os?, _): return os
+        default: return "Mac"
+        }
+    }
+
     private func subscribe(_ mode: String) {
         Link.shared.subscribe(mode == "monitor" ? "s" : mode == "apps" ? "a" : "0")
     }
@@ -122,5 +145,19 @@ struct ContentView: View {
                 .background(.ultraThinMaterial, in: Capsule())
         }
         .foregroundStyle(.white)
+    }
+}
+
+/// Lista dos computadores no Bluetooth, com o ativo marcado.
+struct PeerPicker: View {
+    @ObservedObject private var link = Link.shared
+
+    var body: some View {
+        ForEach(link.peers) { p in
+            Button { link.select(p.id) } label: {
+                Label(p.label + (p.os == "linux" ? " (Linux)" : p.os == "mac" ? " (Mac)" : ""),
+                      systemImage: p.id == link.activePeer ? "checkmark" : (p.os == "linux" ? "pc" : "laptopcomputer"))
+            }
+        }
     }
 }

@@ -16,6 +16,7 @@ import asyncio
 import base64
 import glob
 import hashlib
+import json
 import os
 import plistlib
 import re
@@ -167,7 +168,8 @@ class Input:
             self.mouse = UInput({E.EV_KEY: [E.BTN_LEFT, E.BTN_RIGHT, E.BTN_MIDDLE],
                                  E.EV_REL: [E.REL_X, E.REL_Y, E.REL_WHEEL, E.REL_HWHEEL, hi_v, hi_h]}, name="TracePad Mouse")
             self.kbd = UInput({E.EV_KEY: list(range(1, 249))}, name="TracePad Keyboard")
-        except OSError as e:
+        except Exception as e:  # OSError ou UInputError, conforme a versão do evdev
+            self.mouse = self.kbd = None
             log("✗ sem acesso a /dev/uinput (%s). Rode linux/install.sh ou veja o README." % e)
 
     def _w(self, dev, typ, code, val):
@@ -272,6 +274,8 @@ class Input:
                 self._type_line(line)
 
     def _type_line(self, s):
+        if which("hyprctl"):
+            hypr.env()  # serviço sem WAYLAND_DISPLAY: acha o socket para o wtype
         session = os.environ.get("XDG_SESSION_TYPE", "")
         wayland = session == "wayland" or "WAYLAND_DISPLAY" in os.environ
         # ferramentas externas respeitam o layout do teclado e digitam qualquer caractere
@@ -317,29 +321,48 @@ class Latest:
 
 
 class System:
+    """Volume por pactl (PulseAudio/pipewire-pulse) ou wpctl (WirePlumber); brilho por brightnessctl."""
+
     def __init__(self):
-        self.pactl, self.bctl = which("pactl"), which("brightnessctl")
-        self._vol = Latest(lambda v: run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "%d%%" % round(v * 100)]))
+        self.pactl, self.wpctl, self.bctl = which("pactl"), which("wpctl"), which("brightnessctl")
+        self._vol = Latest(self._apply_volume)
         self._bri = Latest(lambda v: run(["brightnessctl", "-q", "set", "%d%%" % max(1, round(v * 100))]))
 
+    def _apply_volume(self, v):
+        if self.pactl:
+            run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "%d%%" % round(v * 100)])
+        elif self.wpctl:
+            run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "%.2f" % v])
+
+    def _wp(self):
+        """'Volume: 0.40 [MUTED]' → (0.4, True)"""
+        out = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]) if self.wpctl else None
+        m = re.search(r"([\d.]+)", out or "")
+        return (float(m.group(1)) if m else -1), bool(out and "MUTED" in out)
+
     def volume(self):
-        out = run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"]) if self.pactl else None
-        m = re.search(r"(\d+)%", out or "")
-        return int(m.group(1)) / 100 if m else -1
+        if self.pactl:
+            m = re.search(r"(\d+)%", run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"]) or "")
+            return int(m.group(1)) / 100 if m else -1
+        return self._wp()[0]
 
     def muted(self):
-        out = run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"]) if self.pactl else None
-        return bool(out and "yes" in out)
+        if self.pactl:
+            out = run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"])
+            return bool(out and "yes" in out)
+        return self._wp()[1]
 
     def set_volume(self, v):
-        if self.pactl:
+        if self.pactl or self.wpctl:
             self._vol.set(min(max(v, 0), 1))
             if v > 0:
-                spawn(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"])
+                spawn(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"] if self.pactl else ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"])
 
     def toggle_mute(self):
         if self.pactl:
             run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+        elif self.wpctl:
+            run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
 
     def brightness(self):
         out = run(["brightnessctl", "-m"]) if self.bctl else None
@@ -534,7 +557,109 @@ def launch_entry(e):
             spawn(args, e.name)
 
 
+class Hypr:
+    """Hyprland (Omarchy e afins) via hyprctl — aceita a configuração em Lua (hl.dsp.*) e a clássica."""
+
+    def __init__(self):
+        self.lua = None  # descoberto no primeiro dispatch
+
+    def env(self):
+        """Serviços do systemd podem subir sem as variáveis da sessão: acha a instância e o socket do Wayland."""
+        rt = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+        sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+        if not sig or not os.path.isdir(os.path.join(rt, "hypr", sig)):
+            dirs = [d for d in glob.glob(os.path.join(rt, "hypr", "*")) if os.path.exists(os.path.join(d, ".socket.sock"))]
+            if not dirs:
+                return None
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = os.path.basename(max(dirs, key=os.path.getmtime))
+        if "WAYLAND_DISPLAY" not in os.environ:
+            socks = sorted(glob.glob(os.path.join(rt, "wayland-[0-9]")))
+            if socks:
+                os.environ["WAYLAND_DISPLAY"] = os.path.basename(socks[0])
+        return os.environ["HYPRLAND_INSTANCE_SIGNATURE"]
+
+    @property
+    def available(self):
+        return which("hyprctl") and self.env() is not None
+
+    def json(self, what):
+        out = run(["hyprctl", "-j", what])
+        try:
+            return json.loads(out) if out else None
+        except ValueError:
+            return None
+
+    def _try(self, args):
+        try:
+            r = subprocess.run(["hyprctl", "dispatch"] + args, capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        out = r.stdout.strip()
+        return r.returncode == 0 and out in ("", "ok")
+
+    def dispatch(self, lua, classic):
+        """lua: expressão hl.dsp.*; classic: [dispatcher, argumento]. Tenta o modo que funcionou da última vez."""
+        order = [True, False] if self.lua is not False else [False, True]
+        for use_lua in order:
+            if self._try([lua] if use_lua else classic):
+                self.lua = use_lua
+                return True
+        return False
+
+    # gestos padrão no Hyprland (sem visão geral nativa: o scratchpad do Omarchy faz as vezes)
+    def gesture(self, name):
+        g = {
+            "space-right": ('hl.dsp.focus({ workspace = "e+1" })', ["workspace", "e+1"]),
+            "space-left": ('hl.dsp.focus({ workspace = "e-1" })', ["workspace", "e-1"]),
+            "mission": ('hl.dsp.workspace.toggle_special("scratchpad")', ["togglespecialworkspace", "scratchpad"]),
+            "desktop": ('hl.dsp.focus({ workspace = "empty" })', ["workspace", "empty"]),
+            "expose": ("hl.dsp.window.cycle_next()", ["cyclenext", ""]),
+        }.get(name)
+        if not g:
+            return False
+        self.dispatch(*g)
+        if name == "expose":
+            self.dispatch("hl.dsp.window.bring_to_top()", ["bringactivetotop", ""])
+        return True
+
+    def windows(self):
+        """[{id, pid, cls, title, hidden}] — janelas mapeadas; as de áreas especiais (minimizadas, scratchpad) contam como ocultas."""
+        out = []
+        for c in self.json("clients") or []:
+            if not c.get("mapped", True) or c.get("pid", -1) <= 0:
+                continue
+            ws = c.get("workspace") or {}
+            out.append({"id": c.get("address", ""), "pid": c["pid"], "cls": c.get("class") or c.get("initialClass") or "?",
+                        "title": c.get("title") or "", "hidden": str(ws.get("name", "")).startswith("special:"),
+                        "tags": c.get("tags") or []})
+        return out
+
+    def active(self):
+        return (self.json("activewindow") or {}).get("address")
+
+    def raise_(self, w):
+        if w.get("hidden"):  # volta da área especial para a mesa de onde saiu (tag do Omarchy) ou para a atual
+            dest = next((t.rsplit("-", 1)[1] for t in w["tags"] if t.startswith("omarchy-minimized-from-")), None) \
+                or str((self.json("activeworkspace") or {}).get("id", ""))
+            if dest:
+                self.dispatch('hl.dsp.window.move({ workspace = "%s", window = "address:%s" })' % (dest, w["id"]),
+                              ["movetoworkspace", "%s,address:%s" % (dest, w["id"])])
+        self.dispatch('hl.dsp.focus({ window = "address:%s" })' % w["id"], ["focuswindow", "address:" + w["id"]])
+
+    def minimize(self, w):
+        self.dispatch('hl.dsp.window.move({ workspace = "special:minimized", follow = false, window = "address:%s" })' % w["id"],
+                      ["movetoworkspacesilent", "special:minimized,address:" + w["id"]])
+
+    def close(self, w):
+        self.dispatch('hl.dsp.window.close({ window = "address:%s" })' % w["id"], ["closewindow", "address:" + w["id"]])
+
+
+hypr = Hypr()
+
+
 class Apps:
+    """Janelas: Hyprland (hyprctl) ou X11 (wmctrl/xdotool). Apps instalados: arquivos .desktop (qualquer sessão)."""
+
     def __init__(self):
         self.installed = []
         self._entries = None
@@ -550,11 +675,12 @@ class Apps:
         return next((e for e in self.entries if e.matches_class(cls)), None)
 
     def _windows(self):
-        """[(id, pid, classe, título)] das janelas normais — X11 (ou XWayland) via wmctrl."""
+        if hypr.available:
+            return hypr.windows()
         out = run(["wmctrl", "-lpx"]) if which("wmctrl") else None
         if out is None:
             if not self.warned:
-                log("⚠️  modo Apps: instale wmctrl (só funciona em sessões X11)")
+                log("⚠️  modo Apps: precisa de Hyprland (hyprctl) ou X11 com wmctrl")
                 self.warned = True
             return []
         wins = []
@@ -563,21 +689,27 @@ class Apps:
             if len(f) < 5 or f[1] == "-1":  # -1: painéis e docks
                 continue
             try:
-                wins.append((int(f[0], 16), int(f[2]), f[3], f[5] if len(f) > 5 else ""))
+                wins.append({"id": "0x%x" % int(f[0], 16), "pid": int(f[2]), "cls": f[3], "title": f[5] if len(f) > 5 else "",
+                             "hidden": False})
             except ValueError:
                 pass
         return wins
 
     def _active(self):
+        if hypr.available:
+            return hypr.active()
         out = run(["xprop", "-root", "_NET_ACTIVE_WINDOW"]) if which("xprop") else None
         m = re.search(r"0x[0-9a-f]+", out or "")
-        return int(m.group(0), 16) if m else 0
+        return "0x%x" % int(m.group(0), 16) if m else None
 
     def _by_pid(self):
         apps = {}
-        for wid, pid, cls, title in self._windows():
-            apps.setdefault(pid, {"cls": cls, "wins": []})["wins"].append((wid, title))
+        for w in self._windows():
+            apps.setdefault(w["pid"], {"cls": w["cls"], "wins": []})["wins"].append(w)
         return apps
+
+    def _wins(self, pid):
+        return self._by_pid().get(pid, {"wins": []})["wins"]
 
     def _name(self, cls):
         e = self._entry_for(cls.split(".")[-1]) or self._entry_for(cls.split(".")[0])
@@ -588,10 +720,12 @@ class Apps:
         active = self._active()
         rows = []
         for pid, a in self._by_pid().items():
-            rows.append((self._name(a["cls"]), pid, any(w[0] == active for w in a["wins"]), a["cls"], len(a["wins"])))
+            wins = a["wins"]
+            rows.append((self._name(a["cls"]), pid, any(w["id"] == active for w in wins), all(w["hidden"] for w in wins),
+                         a["cls"], len(wins)))
         rows.sort(key=lambda r: r[0].casefold())
-        return "A " + "\t".join(US.join([str(pid), "1" if act else "0", "0", clean(name), clean(cls).replace(" ", "_"), str(n)])
-                                for name, pid, act, cls, n in rows)
+        return "A " + "\t".join(US.join([str(pid), "1" if act else "0", "1" if hid else "0", clean(name), clean(cls).replace(" ", "_"), str(n)])
+                                for name, pid, act, hid, cls, n in rows)
 
     def icon(self, pid):
         a = self._by_pid().get(pid)
@@ -603,33 +737,41 @@ class Apps:
         return "I %s %s" % (clean(cls).replace(" ", "_"), png) if png else None
 
     def windows(self, pid):
-        a = self._by_pid().get(pid, {"wins": []})
-        return "W %d " % pid + "\t".join("%d%s%s%s0" % (i, US, clean(t) or "Sem título", US) for i, (_, t) in enumerate(a["wins"]))
+        return "W %d " % pid + "\t".join("%d%s%s%s%d" % (i, US, clean(w["title"]) or "Sem título", US, 1 if w["hidden"] else 0)
+                                         for i, w in enumerate(self._wins(pid)))
 
-    def _raise(self, wid):
-        spawn(["wmctrl", "-ia", "0x%x" % wid])
+    def _raise(self, w):
+        if hypr.available:
+            hypr.raise_(w)
+        else:
+            spawn(["wmctrl", "-ia", w["id"]])
 
     def activate(self, pid):
-        a = self._by_pid().get(pid)
-        if a:
-            self._raise(a["wins"][0][0])
+        wins = self._wins(pid)
+        if wins:
+            self._raise(next((w for w in wins if not w["hidden"]), wins[0]))
 
     def focus(self, pid, i, title):
-        wins = self._by_pid().get(pid, {"wins": []})["wins"]
+        wins = self._wins(pid)
         if not wins:
             return
-        if not (i < len(wins) and clean(wins[i][1]) == title):
-            i = next((j for j, w in enumerate(wins) if clean(w[1]) == title), i)
-        self._raise(wins[min(i, len(wins) - 1)][0])
+        if not (i < len(wins) and clean(wins[i]["title"]) == title):
+            i = next((j for j, w in enumerate(wins) if clean(w["title"]) == title), i)
+        self._raise(wins[min(i, len(wins) - 1)])
 
     def hide(self, pid):
-        if which("xdotool"):
-            for wid, _ in self._by_pid().get(pid, {"wins": []})["wins"]:
-                spawn(["xdotool", "windowminimize", str(wid)])
+        for w in self._wins(pid):
+            if hypr.available:
+                hypr.minimize(w)
+            elif which("xdotool"):
+                spawn(["xdotool", "windowminimize", str(int(w["id"], 16))])
 
     def quit(self, pid):
-        for wid, _ in self._by_pid().get(pid, {"wins": []})["wins"]:
-            spawn(["wmctrl", "-ic", "0x%x" % wid])  # fecha educadamente (o app pode pedir para salvar)
+        for w in self._wins(pid):  # fecha educadamente (o app pode pedir para salvar)
+            if hypr.available:
+                hypr.close(w)
+            else:
+                spawn(["wmctrl", "-ic", w["id"]])
 
     def installed_list(self):
         """'L índice␟nome␟aberto\\t…'"""
@@ -671,9 +813,10 @@ class Actions:
 # @space-left = super+pageup
 # @space-right = super+pagedown
 # @desktop = wmctrl -k on
+# Hyprland/Omarchy: @mission = hyprctl dispatch 'hl.dsp.workspace.toggle_special("scratchpad")'
 """
 
-    # padrões dos gestos (GNOME; no KDE a visão geral é super+w e as mesas ctrl+f1…)
+    # padrões dos gestos (GNOME; no KDE a visão geral é super+w e as mesas ctrl+f1…; no Hyprland, ver Hypr.gesture)
     gesture_defaults = {
         "mission": "super", "expose": "super", "space-right": "ctrl+alt+right", "space-left": "ctrl+alt+left",
         "desktop": "super+d", "lookup": "", "zoom-in": "ctrl+equal", "zoom-out": "ctrl+minus",
@@ -738,6 +881,8 @@ class Actions:
     def gesture(self, name):
         spec = next((c for n, c in self.commands() if n == "@" + name), None)
         if spec is None:
+            if hypr.available and hypr.gesture(name):  # Hyprland/Omarchy: mesas e scratchpad pelo hyprctl
+                return
             spec = self.gesture_defaults.get(name, "")
         elif self.combo(spec) is None:
             return self._shell(spec, "@" + name)
@@ -1031,7 +1176,9 @@ async def ble_loop():
     except ImportError:
         log("⚠️  Bluetooth: instale bleak (pip install bleak) para conectar sem cabo")
         return
+    last_err = None
     while True:
+        wait = 1
         try:
             dev = await BleakScanner.find_device_by_filter(
                 lambda d, ad: BLE_SERVICE in [u.lower() for u in (ad.service_uuids or [])], timeout=10)
@@ -1073,10 +1220,13 @@ async def ble_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log("Bluetooth: %s" % e)
+            if str(e) != last_err:  # BlueZ parado/sem adaptador: avisa uma vez e tenta com calma
+                log("Bluetooth: %s (o serviço bluetooth está ativo?)" % e)
+                last_err = str(e)
+            wait = 10
         finally:
             disconnected("ble")
-        await asyncio.sleep(1)
+        await asyncio.sleep(wait)
 
 
 # MARK: - PWA por Wi-Fi: HTTP estático (:8787) + WebSocket (:8788) autenticado por PIN

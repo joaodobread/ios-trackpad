@@ -43,6 +43,15 @@ Ou rode direto: `python3 linux/tracepad.py`. Só `python3-evdev` é obrigatório
 | Apps (janelas) | `wmctrl` + `xdotool`, só em X11; abrir apps instalados funciona em qualquer sessão |
 | Texto com acentos | `xdotool` (X11), `wtype` (Sway/Hyprland) ou `wl-copy` (GNOME/KDE Wayland, cola) |
 
+### Omarchy / Hyprland
+
+Suportado: o `install.sh` usa o pacman (tudo nos repositórios oficiais) e o serviço sobe com a sessão do uwsm. O Omarchy já traz `wtype`, `wl-clipboard`, `libpulse`, `brightnessctl` e o agente de pareamento Bluetooth. No Hyprland:
+
+- **Apps**: janelas pelo `hyprctl` (configuração em Lua do Omarchy ou a clássica). Ocultar manda para `special:minimized`, como o Super+M do Omarchy, e abrir de novo traz de volta para a mesa de origem.
+- **Gestos padrão**: ←/→ trocam de mesa (`e±1`), ↑ abre o scratchpad (Super+S), ↓ com 3 dedos alterna janelas e ↓ com 4 dedos vai para uma mesa vazia. Redefina com `@gesto` (ex.: `@mission = hyprctl dispatch 'hl.dsp.workspace.toggle_special("scratchpad")'`) ou por sistema em Ajustes › Gestos.
+- **Texto** por `wtype` (acentos inclusos); **volume** por `pactl` ou `wpctl`.
+- Rodando como serviço, o host acha sozinho a instância do Hyprland e o socket do Wayland.
+
 As teclas chegam com códigos do Mac e viram as mesmas teclas físicas: ⌘ vira Ctrl (ou Super com `TRACEPAD_CMD=super`) e ❖ é Super. Os gestos padrão viram a visão geral (Super), Ctrl+Alt+←/→ para trocar de mesa e Super+D para mostrar a mesa — e dá para mudar (veja [Gestos configuráveis](#gestos-configuráveis)).
 
 ## iPhone

@@ -6,13 +6,23 @@ cd "$(dirname "$0")/.."
 DIR=$(pwd)
 
 echo "Instalando dependências…"
+# X11 usa wmctrl/xdotool; Wayland usa wtype/wl-clipboard (no Hyprland/Omarchy o modo Apps vai pelo hyprctl)
 if command -v apt-get >/dev/null; then
-  sudo apt-get install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl wmctrl xdotool python3-pip || true
+  sudo apt-get install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl \
+    wmctrl xdotool wtype wl-clipboard python3-pip || true
   sudo apt-get install -y python3-bleak 2>/dev/null || pip3 install --user bleak 2>/dev/null || pip3 install --user --break-system-packages bleak || true
 elif command -v dnf >/dev/null; then
-  sudo dnf install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl wmctrl xdotool python3-bleak || true
+  sudo dnf install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl \
+    wmctrl xdotool wtype wl-clipboard python3-bleak || true
 elif command -v pacman >/dev/null; then
-  sudo pacman -S --needed --noconfirm python-evdev python-psutil usbmuxd libimobiledevice libpulse brightnessctl wmctrl xdotool python-bleak || true
+  # Arch e Omarchy (que já traz wtype, wl-clipboard, libpulse, brightnessctl e o agente de pareamento bt-agent)
+  sudo pacman -S --needed --noconfirm python-evdev python-psutil usbmuxd libimobiledevice libpulse brightnessctl wtype wl-clipboard || true
+  [ -z "$WAYLAND_DISPLAY" ] && sudo pacman -S --needed --noconfirm wmctrl xdotool || true
+  if ! python3 -c "import bleak" 2>/dev/null; then
+    sudo pacman -S --needed --noconfirm python-bleak 2>/dev/null \
+      || { command -v yay >/dev/null && yay -S --needed --noconfirm python-bleak; } \
+      || pip install --user --break-system-packages bleak || true
+  fi
 else
   echo "Gerenciador de pacotes não reconhecido: instale python3-evdev, psutil, bleak e usbmuxd manualmente."
 fi

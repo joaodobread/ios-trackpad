@@ -70,6 +70,26 @@ jobs:
           name: TracePad-linux
           path: TracePad-linux.tar.gz
 
+  arch:
+    # Arch/Omarchy: confere os nomes de pacote do install.sh e sobe o host no Python do Arch
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pacotes do install.sh
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm --needed python python-evdev python-psutil python-bleak usbmuxd libimobiledevice \
+            libpulse brightnessctl wtype wl-clipboard wmctrl xdotool
+
+      - name: Host do Linux
+        run: |
+          python3 linux/tracepad.py web > log.txt 2>&1 &
+          sleep 4
+          python3 -c "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8787/').status == 200"
+          cat log.txt
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [mac, linux]

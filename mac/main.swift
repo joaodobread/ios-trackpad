@@ -31,6 +31,7 @@ final class Controller: NSObject, NSMenuDelegate {
         usb.start()
         ble.start()
         web.start()
+        Actions.ensureFile()
 
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         if !AXIsProcessTrustedWithOptions(opts) {
@@ -80,12 +81,15 @@ final class Controller: NSObject, NSMenuDelegate {
             info("http://\(ip):\(HTTP_PORT)")
         }
         menu.addItem(.separator())
+        action("Editar ações de shell…", #selector(editActions))
         action("Sair", #selector(quit), "q")
     }
 
     @objc func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
+
+    @objc func editActions() { Actions.edit() }
 
     @objc func quit() { NSApp.terminate(nil) }
 }

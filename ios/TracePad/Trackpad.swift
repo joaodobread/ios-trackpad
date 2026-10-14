@@ -21,16 +21,12 @@ func sendKey(_ code: Int, extra: String = "") {
     Link.shared.send(m.isEmpty ? "k \(code)" : "k \(code) \(m)")
 }
 
-private enum Sys {
-    static let missionControl = (126, "t"), expose = (125, "t"), spaceRight = (124, "t"), spaceLeft = (123, "t")
-    static let desktop = (103, ""), lookUp = (2, "tc"), zoomIn = (24, "c"), zoomOut = (27, "c")
-}
-private func sys(_ k: (Int, String)) { Link.shared.send(k.1.isEmpty ? "k \(k.0)" : "k \(k.0) \(k.1)") }
 
 final class TrackpadView: UIView {
     var onFirstTouch: (() -> Void)?
     private let s = Settings.shared
     private let link = Link.shared
+    private let gestures = GestureStore.shared
 
     private enum Mode { case scroll, pinch, done }
     private struct Gesture {
@@ -49,6 +45,8 @@ final class TrackpadView: UIView {
         var lt: TimeInterval = 0
         var acc = CGPoint.zero
         var pinch: CGFloat = 0
+        /// pinça com ação personalizada dispara uma vez por gesto (o padrão, zoom, repete a cada passo)
+        var pinchFired = false
     }
 
     private var points = [ObjectIdentifier: CGPoint]()
@@ -145,8 +143,12 @@ final class TrackpadView: UIView {
                 g.samples.append((now, dx, dy))
                 if g.samples.count > 12 { g.samples.removeFirst() }
             case .pinch:
-                while g.pinch > 60 { sys(Sys.zoomIn); g.pinch -= 60; haptic(tick, 0.5) }
-                while g.pinch < -60 { sys(Sys.zoomOut); g.pinch += 60; haptic(tick, 0.5) }
+                while abs(g.pinch) > 60 {
+                    let id = g.pinch > 0 ? "pinch.open" : "pinch.close"
+                    g.pinch -= g.pinch > 0 ? 60 : -60
+                    if gestures.isCustom(id) { if g.pinchFired { continue }; g.pinchFired = true }
+                    if gestures.perform(id) { haptic(tick, 0.5) }
+                }
             case .done: break
             }
         case 3 where s.threeFingerDrag:
@@ -193,21 +195,16 @@ final class TrackpadView: UIView {
             link.send("c r")
             haptic(thump)
         case 3:
-            sys(Sys.lookUp)
-            haptic(thump)
-        default: break
+            if gestures.perform("3.tap") { haptic(thump) }
+        default:
+            if gestures.perform("4.tap") { haptic(thump) }
         }
     }
 
     private func swipe(_ n: Int, _ dir: String) {
-        let fourFinger = n >= 4 && !s.threeFingerDrag
-        switch dir {
-        case "up": sys(Sys.missionControl)
-        case "down": sys(fourFinger ? Sys.desktop : Sys.expose)
-        case "left": sys(Sys.spaceRight)
-        default: sys(Sys.spaceLeft)
-        }
-        haptic(thump)
+        // com "arrastar com 3 dedos", o ↓ de 4 dedos assume o App Exposé dos 3 dedos
+        let standard = n >= 4 && dir == "down" && s.threeFingerDrag ? "expose" : nil
+        if gestures.perform("\(min(n, 4)).\(dir)", standard: standard) { haptic(thump) }
     }
 
     // MARK: rolagem com fases + inércia (o macOS espera isso do driver do trackpad)

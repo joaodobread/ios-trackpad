@@ -17,6 +17,7 @@ struct SettingsView: View {
                         Label("Trackpad", systemImage: "hand.point.up.left").tag("trackpad")
                         Label("Monitor", systemImage: "gauge.with.dots.needle.67percent").tag("monitor")
                         Label("Apps", systemImage: "square.grid.2x2").tag("apps")
+                        Label("Ações", systemImage: "bolt").tag("actions")
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -40,6 +41,10 @@ struct SettingsView: View {
                         Text("Gestos").tag(false)
                         Text("Arrastar").tag(true)
                     }
+                }
+
+                Section {
+                    NavigationLink { GesturesView() } label: { Label("Gestos", systemImage: "hand.draw") }
                 }
 
                 Section("Aparência do trackpad") {

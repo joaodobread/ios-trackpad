@@ -61,6 +61,8 @@ final class Link: NSObject, ObservableObject {
     private var installedRequested = Set<String>()
     /// janelas do app pedido por último ("W pid")
     @Published private(set) var windows: (pid: Int, list: [MacWindow])?
+    /// ações de shell definidas no computador ("C"), chamadas pelo nome
+    @Published private(set) var commands = [String]()
     private var iconRequested = Set<String>()
     /// dados contínuos assinados no Mac ("s" monitor, "a" apps, "0" nada); reenviado a cada reconexão
     private var subscription: Character = "0"
@@ -227,6 +229,7 @@ final class Link: NSObject, ObservableObject {
             case "W": parseWindows(body)
             case "L": parseInstalled(body)
             case "J": parseInstalledIcon(body)
+            case "C": commands = body.split(separator: "\t").map(String.init)
             default: break
             }
         }

@@ -16,11 +16,11 @@ private func levelColor(_ v: Double) -> Color {
 }
 
 /// Aviso quando não há Mac conectado.
-private struct Disconnected: View {
+struct Disconnected: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: "cable.connector.slash").font(.largeTitle)
-            Text("Conecte ao Mac por USB ou Bluetooth").font(.callout)
+            Text("Conecte ao computador por USB ou Bluetooth").font(.callout)
         }
         .foregroundStyle(.secondary)
     }

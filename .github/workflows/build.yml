@@ -3,23 +3,86 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
-  build:
+  mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: App do Mac
-        run: swiftc -O -swift-version 5 mac/*.swift -o TracePad
+        run: |
+          APP=build/TracePad.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          swiftc -O -swift-version 5 mac/*.swift -o "$APP/Contents/MacOS/TracePad"
+          cp mac/Info.plist "$APP/Contents/Info.plist"
+          cp -R web "$APP/Contents/Resources/web"
+          codesign --force --sign - "$APP"
+          ditto -c -k --keepParent "$APP" TracePad-mac.zip
 
       - name: App do iPhone (sem assinatura)
         run: |
-          xcodebuild -project ios/TracePad.xcodeproj -scheme TracePad \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build -quiet
+          xcodebuild -project ios/TracePad.xcodeproj -scheme TracePad -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build -quiet
+          mkdir -p Payload
+          cp -R build/ios/Build/Products/Release-iphoneos/TracePad.app Payload/
+          zip -qr TracePad-ios-unsigned.ipa Payload
 
       - name: PWA (sintaxe do JS)
         run: |
           python3 -c "import re;s=open('web/index.html').read();open('app.js','w').write(re.search(r'<script>(.*)</script>',s,re.S).group(1))"
           node --check app.js
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TracePad-mac
+          path: TracePad-mac.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TracePad-ios-unsigned
+          path: TracePad-ios-unsigned.ipa
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências
+        run: sudo apt-get update -q && sudo apt-get install -y -q python3-evdev python3-psutil
+
+      - name: Host do Linux (compila e sobe o servidor)
+        run: |
+          python3 -m py_compile linux/tracepad.py
+          python3 linux/tracepad.py web > log.txt 2>&1 &
+          sleep 3
+          curl -sf http://127.0.0.1:8787/ | grep -q TracePad
+          grep "TracePad rodando" log.txt
+          kill %1
+
+      - name: Pacote
+        run: tar czf TracePad-linux.tar.gz linux web README.md LICENSE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TracePad-linux
+          path: TracePad-linux.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mac, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            TracePad-mac.zip
+            TracePad-ios-unsigned.ipa
+            TracePad-linux.tar.gz

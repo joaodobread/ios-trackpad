@@ -36,7 +36,7 @@ final class Input {
         var f: CGEventFlags = []
         for c in mods {
             switch c {
-            case "c": f.insert(.maskCommand)
+            case "c", "w": f.insert(.maskCommand) // w = Super no Linux; no Mac, ⌘
             case "a": f.insert(.maskAlternate)
             case "t": f.insert(.maskControl)
             case "s": f.insert(.maskShift)
@@ -106,7 +106,7 @@ final class Input {
 
     func key(_ code: CGKeyCode, mods: Substring) {
         var f: CGEventFlags = []
-        let used = Input.modKeys.filter { mods.contains($0.0) }
+        let used = Input.modKeys.filter { mods.contains($0.0) || ($0.0 == "c" && mods.contains("w")) }
         for (_, k, m) in used {
             f.insert(m)
             post(k, down: true, f)
@@ -152,7 +152,9 @@ let input = Input()
 //   c l|r|m [mods]     clique (contagem de duplo/triplo clique feita aqui)
 //   d / u              segurar / soltar botão esquerdo (arrastar)
 //   s ph mom dx dy     scroll contínuo com fases (momentum incluso)
-//   k code [mods]      tecla (mods: c=cmd a=opt t=ctrl s=shift)
+//   k code [mods]      tecla (mods: c=cmd a=opt t=ctrl s=shift w=super, que no Mac é cmd)
+//   g nome             gesto padrão (mission, expose, desktop, space-left/right, lookup, zoom-in/out);
+//                      redefinível em ~/.tracepad-actions com "@nome = atalho ou comando"
 //   t texto            digitar texto unicode
 //   p x                ping (eco)
 //   v 0..1 / b 0..1    volume / brilho
@@ -167,11 +169,16 @@ let input = Input()
 //   f pid índice título     foca uma janela específica
 //   L                  apps instalados → "L índice␟nome␟aberto\t…"
 //   j índice / o índice     ícone ("J índice base64png") / abrir app instalado
+//   C                  ações de shell do computador → "C nome\tnome…" (de ~/.tracepad-actions)
+//   r nome             roda a ação de shell com esse nome
+//   O alvo             abre URL ou app pelo nome
 
 /// owner identifica a conexão (para cancelar assinaturas quando ela cair).
 func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void = { _ in }) {
     guard let op = msg.first else { return }
     if op == "t" { input.type(String(msg.dropFirst(2))); return }
+    if op == "r" { Actions.run(String(msg.dropFirst(2))); return }
+    if op == "O" { Actions.open(String(msg.dropFirst(2))); return }
     if op == "f" { // o título pode ter espaços: tudo depois do índice
         let p = msg.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
         if p.count >= 3, let pid = pid_t(p[1]), let i = Int(p[2]) { Hub.shared.apps.focusWindow(pid, index: i, title: p.count > 3 ? String(p[3]) : "") }
@@ -203,6 +210,8 @@ func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void
     case "L": reply(Hub.shared.apps.installedList())
     case "j": if let r = Hub.shared.apps.installedIcon(Int(d(1))) { reply(r) }
     case "o": Hub.shared.apps.launch(Int(d(1)))
+    case "C": reply(Actions.list())
+    case "g": Actions.gesture(String(s(1)))
     default: break
     }
 }

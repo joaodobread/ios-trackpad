@@ -38,6 +38,7 @@ struct ContentView: View {
             switch s.mode {
             case "monitor": MonitorView()
             case "apps": AppsView()
+            case "actions": ActionsView()
             default: trackpad
             }
 

@@ -33,6 +33,7 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     private func reset() {
         if peripheral != nil { input.release() }
+        Hub.shared.drop(owner: "ble")
         peripheral = nil
         replies = nil
         buffer = ""
@@ -80,9 +81,15 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let d = ch.value, let s = String(data: d, encoding: .utf8) else { return }
         buffer += s
         while let i = buffer.firstIndex(of: "\n") {
-            handle(String(buffer[..<i])) { [weak self] r in
-                guard let self, let ch = self.replies else { return }
-                p.writeValue(Data((r + "\n").utf8), for: ch, type: .withResponse)
+            handle(String(buffer[..<i]), owner: "ble") { [weak self] r in
+                guard let self, let ch = self.replies, self.peripheral === p else { return }
+                let data = Data((r + "\n").utf8)
+                let max = p.maximumWriteValueLength(for: .withResponse)
+                var off = 0
+                while off < data.count {
+                    p.writeValue(data.subdata(in: off..<min(off + max, data.count)), for: ch, type: .withResponse)
+                    off += max
+                }
             }
             buffer.removeSubrange(...i)
         }

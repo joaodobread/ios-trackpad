@@ -45,9 +45,19 @@ Bluetooth: na primeira conexão o iPhone e o Mac pedem para parear (a caracterí
 
 Teclado: botão ⌨ abre o teclado do iPhone com barra de esc, tab, setas e modificadores fixos (⌘ ⌥ ⌃ ⇧). Modificador + toque = ⌘-clique etc.
 
+Botão ☀︎: painel com brilho (tela embutida), volume, mudo e controles de mídia do Mac.
+
+## Modos
+
+Troque em Ajustes › Modo:
+
+- **Trackpad** — o padrão.
+- **Monitor** — CPU, GPU, memória e disco em medidores, rede, bateria, histórico de CPU e processos que mais consomem (atualiza a cada 1 s).
+- **Apps** — apps abertos em ordem alfabética, estilo ⌘-Tab. Toque para trazer para frente; apps com várias janelas mostram um número e abrem a lista para escolher a janela. Segure para ocultar ou encerrar.
+
 ## Protocolo
 
-Linhas de texto, iguais em todos os transportes (ver `mac/Input.swift`): `m dx dy`, `c l|r|m [mods]`, `d`/`u`, `s fase momentum dx dy`, `k código [mods]`, `t texto`.
+Linhas de texto, iguais em todos os transportes, nos dois sentidos (lista completa em `mac/Input.swift`): `m dx dy`, `c l|r|m [mods]`, `d`/`u`, `s fase momentum dx dy`, `k código [mods]`, `t texto`, volume/brilho/mídia, assinatura de monitor/apps (`w s|a|0`) e controle de apps e janelas.
 
 - USB: iPhone escuta em `localhost:2345`; o Mac conecta pelo usbmuxd.
 - BLE: serviço `6E7A0001-…`, característica de notify `6E7A0002-…`.

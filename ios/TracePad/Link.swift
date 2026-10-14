@@ -7,8 +7,30 @@ import Foundation
 import Network
 import CoreBluetooth
 import Combine
+import UIKit
 
 enum Transport: String { case none = "Desconectado", usb = "USB", ble = "Bluetooth" }
+
+struct MacStats {
+    var cpu: Double, gpu: Double?, memUsed: Double, memTotal: Double
+    var netIn: Double, netOut: Double, diskUsed: Double, diskTotal: Double
+    var battery: Double?, charging: Bool, cores: Int
+}
+
+struct MacProcess: Identifiable {
+    let id: Int
+    let name: String, cpu: Double, mem: Double
+}
+
+struct MacApp: Identifiable {
+    var id: Int { pid }
+    let pid: Int, active: Bool, hidden: Bool, name: String, key: String, windows: Int
+}
+
+struct MacWindow: Identifiable {
+    let id: Int // índice
+    let title: String, minimized: Bool
+}
 
 final class Link: NSObject, ObservableObject {
     static let shared = Link()
@@ -23,6 +45,16 @@ final class Link: NSObject, ObservableObject {
     @Published private(set) var volume: Double?
     @Published private(set) var brightness: Double?
     @Published private(set) var muted = false
+    @Published private(set) var stats: MacStats?
+    @Published private(set) var cpuHistory = [Double]()
+    @Published private(set) var processes = [MacProcess]()
+    @Published private(set) var apps = [MacApp]()
+    @Published private(set) var icons = [String: UIImage]()
+    /// janelas do app pedido por último ("W pid")
+    @Published private(set) var windows: (pid: Int, list: [MacWindow])?
+    private var iconRequested = Set<String>()
+    /// dados contínuos assinados no Mac ("s" monitor, "a" apps, "0" nada); reenviado a cada reconexão
+    private var subscription: Character = "0"
     private var inbox = ""
 
     private var listener: NWListener?
@@ -45,6 +77,9 @@ final class Link: NSObject, ObservableObject {
     }
 
     func start() {
+        #if DEBUG
+        if let mode = ProcessInfo.processInfo.environment["TP_DEMO"] { return demo(mode) }
+        #endif
         startUSB()
         pm = CBPeripheralManager(delegate: self, queue: .main)
     }
@@ -108,9 +143,18 @@ final class Link: NSObject, ObservableObject {
         }
     }
 
+    func subscribe(_ kind: Character) {
+        subscription = kind
+        send("w \(kind)")
+    }
+
     private func update() {
         let t: Transport = usb?.state == .ready ? .usb : subscribers.isEmpty ? .none : .ble
-        if t != transport { transport = t }
+        if t != transport {
+            transport = t
+            if t == .none { iconRequested.removeAll() }
+            if t != .none, subscription != "0" { DispatchQueue.main.async { self.send("w \(self.subscription)") } }
+        }
         if t != .ble { queue.removeAll() }
     }
 
@@ -163,13 +207,77 @@ final class Link: NSObject, ObservableObject {
         while let i = inbox.firstIndex(of: "\n") {
             let line = inbox[..<i]
             inbox.removeSubrange(...i)
-            let a = line.split(separator: " ")
-            guard a.first == "S", a.count >= 4 else { continue }
-            let v = Double(a[1]) ?? -1, b = Double(a[2]) ?? -1
-            volume = v < 0 ? nil : v
-            brightness = b < 0 ? nil : b
-            muted = a[3] == "1"
+            guard let op = line.first else { continue }
+            let body = line.dropFirst(2)
+            switch op {
+            case "S": parseState(body)
+            case "T": parseStats(body)
+            case "P": parseProcesses(body)
+            case "A": parseApps(body)
+            case "I": parseIcon(body)
+            case "W": parseWindows(body)
+            default: break
+            }
         }
+    }
+
+    private func parseState(_ body: Substring) {
+        let a = body.split(separator: " ")
+        guard a.count >= 3 else { return }
+        let v = Double(a[0]) ?? -1, b = Double(a[1]) ?? -1
+        volume = v < 0 ? nil : v
+        brightness = b < 0 ? nil : b
+        muted = a[2] == "1"
+    }
+
+    private func parseStats(_ body: Substring) {
+        let a = body.split(separator: " ").map { Double($0) ?? -1 }
+        guard a.count >= 11 else { return }
+        stats = MacStats(cpu: a[0], gpu: a[1] < 0 ? nil : a[1], memUsed: a[2], memTotal: a[3], netIn: a[4], netOut: a[5],
+                         diskUsed: a[6], diskTotal: a[7], battery: a[8] < 0 ? nil : a[8], charging: a[9] == 1, cores: Int(a[10]))
+        cpuHistory.append(a[0])
+        if cpuHistory.count > 60 { cpuHistory.removeFirst(cpuHistory.count - 60) }
+    }
+
+    private func parseProcesses(_ body: Substring) {
+        processes = body.split(separator: "\t").enumerated().compactMap { i, row in
+            let f = row.split(separator: "\u{1f}", omittingEmptySubsequences: false)
+            guard f.count >= 3 else { return nil }
+            return MacProcess(id: i, name: String(f[0]), cpu: Double(f[1]) ?? 0, mem: Double(f[2]) ?? 0)
+        }
+    }
+
+    private func parseApps(_ body: Substring) {
+        apps = body.split(separator: "\t").compactMap { row in
+            let f = row.split(separator: "\u{1f}", omittingEmptySubsequences: false)
+            guard f.count >= 5, let pid = Int(f[0]) else { return nil }
+            return MacApp(pid: pid, active: f[1] == "1", hidden: f[2] == "1", name: String(f[3]), key: String(f[4]),
+                          windows: f.count > 5 ? Int(f[5]) ?? 0 : 0)
+        }
+        // ícones: pede só os que faltam, uma vez por sessão
+        for app in apps where icons[app.key] == nil && !iconRequested.contains(app.key) {
+            iconRequested.insert(app.key)
+            send("i \(app.pid)")
+        }
+    }
+
+    private func parseWindows(_ body: Substring) {
+        let a = body.split(separator: " ", maxSplits: 1)
+        guard let pid = a.first.flatMap({ Int($0) }) else { return }
+        let rows = a.count > 1 ? a[1].split(separator: "\t") : []
+        windows = (pid, rows.compactMap { row in
+            let f = row.split(separator: "\u{1f}", omittingEmptySubsequences: false)
+            guard f.count >= 3, let i = Int(f[0]) else { return nil }
+            return MacWindow(id: i, title: String(f[1]), minimized: f[2] == "1")
+        })
+    }
+
+    func clearWindows() { windows = nil }
+
+    private func parseIcon(_ body: Substring) {
+        let a = body.split(separator: " ", maxSplits: 1)
+        guard a.count == 2, let data = Data(base64Encoded: String(a[1])), let img = UIImage(data: data) else { return }
+        icons[String(a[0])] = img
     }
 }
 
@@ -220,3 +328,22 @@ extension Link: CBPeripheralManagerDelegate {
         if let first = requests.first { p.respond(to: first, withResult: .success) }
     }
 }
+
+#if DEBUG
+extension Link {
+    /// Dados fictícios para conferir os modos no simulador: TP_DEMO=1
+    fileprivate func demo(_: String) {
+        transport = .usb
+        let u = "\u{1f}"
+        received(Data(("S 0.58 0.5 0\n" +
+            "A 1\(u)1\(u)0\(u)Safari\(u)a\(u)1\t2\(u)0\(u)0\(u)Xcode\(u)b\(u)3\t3\(u)0\(u)0\(u)Finder\(u)c\t4\(u)0\(u)1\(u)Spotify\(u)d\t5\(u)0\(u)0\(u)Slack\(u)e\t6\(u)0\(u)0\(u)Terminal\(u)f\n").utf8))
+        var t = 0.0
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            t += 1
+            let cpu = 0.35 + 0.25 * sin(t / 3)
+            self?.received(Data(("T \(cpu) 0.37 13540360192 17179869184 2933800 176030 454083641280 494384795648 0.82 1 10\n" +
+                "P Xcode\(u)1.2\(u)2100000000\tSafari\(u)0.4\(u)900000000\tSlack Helper (Renderer)\(u)0.18\(u)705187104\tWindowServer\(u)0.15\(u)300000000\tSpotify\(u)0.06\(u)400000000\n").utf8))
+        }
+    }
+}
+#endif

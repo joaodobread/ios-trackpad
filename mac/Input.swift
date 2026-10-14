@@ -159,10 +159,22 @@ let input = Input()
 //   z                  alterna mudo
 //   x tecla            tecla de mídia (16 play/pause, 17 próxima, 18 anterior)
 //   q                  pede o estado → responde "S volume brilho mudo"
+//   w s|a|0            assina dados contínuos: monitor ("T …", "P …") / apps ("A …") / nada
+//   l                  lista de apps → "A …"
+//   i pid              ícone do app → "I chave base64png"
+//   a pid / h pid / Q pid   ativar / ocultar / encerrar app
+//   W pid              janelas do app → "W pid índice␟título␟minimizada\t…"
+//   f pid índice título     foca uma janela específica
 
-func handle(_ msg: String, reply: (String) -> Void = { _ in }) {
+/// owner identifica a conexão (para cancelar assinaturas quando ela cair).
+func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void = { _ in }) {
     guard let op = msg.first else { return }
     if op == "t" { input.type(String(msg.dropFirst(2))); return }
+    if op == "f" { // o título pode ter espaços: tudo depois do índice
+        let p = msg.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
+        if p.count >= 3, let pid = pid_t(p[1]), let i = Int(p[2]) { Hub.shared.apps.focusWindow(pid, index: i, title: p.count > 3 ? String(p[3]) : "") }
+        return
+    }
     let a = msg.split(separator: " ")
     func d(_ i: Int) -> Double { i < a.count ? Double(a[i]) ?? 0 : 0 }
     func s(_ i: Int) -> Substring { i < a.count ? a[i] : "" }
@@ -179,6 +191,13 @@ func handle(_ msg: String, reply: (String) -> Void = { _ in }) {
     case "z": SystemControls.setMuted(!SystemControls.muted); reply(SystemControls.state)
     case "x": SystemControls.mediaKey(Int(d(1)))
     case "q": reply(SystemControls.state)
+    case "w": Hub.shared.subscribe(s(1).first ?? "0", owner: owner, reply: reply)
+    case "l": reply(Hub.shared.apps.list())
+    case "i": if let r = Hub.shared.apps.icon(pid_t(d(1))) { reply(r) }
+    case "a": Hub.shared.apps.activate(pid_t(d(1)))
+    case "h": Hub.shared.apps.hide(pid_t(d(1)))
+    case "Q": Hub.shared.apps.quit(pid_t(d(1)))
+    case "W": reply(Hub.shared.apps.windows(pid_t(d(1))))
     default: break
     }
 }

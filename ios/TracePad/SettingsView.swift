@@ -12,6 +12,16 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Modo") {
+                    Picker("Modo", selection: $s.mode) {
+                        Label("Trackpad", systemImage: "hand.point.up.left").tag("trackpad")
+                        Label("Monitor", systemImage: "gauge.with.dots.needle.67percent").tag("monitor")
+                        Label("Apps", systemImage: "square.grid.2x2").tag("apps")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
                 Section("Conexão") {
                     LabeledContent("Status", value: link.transport.rawValue)
                     if link.bluetoothOff { Text("Bluetooth desligado ou sem permissão.").foregroundStyle(.orange) }

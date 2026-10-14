@@ -15,6 +15,6 @@ if [ ! -x "$APP/Contents/MacOS/TracePad" ] || [ -n "$(find mac web -newer "$APP/
   ID=$(security find-identity -v -p codesigning | grep "Apple Development" | grep -v REVOKED | head -1 | awk '{print $2}')
   codesign --force --sign "${ID:--}" "$APP" >/dev/null 2>&1 || codesign --force --sign - "$APP"
 fi
-pkill -x TracePad 2>/dev/null || true
+pkill -x TracePad 2>/dev/null && sleep 1 || true # espera o processo antigo sair antes de abrir
 open "$APP"
 echo "TracePad aberto na barra de menus."

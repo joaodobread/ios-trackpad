@@ -111,7 +111,7 @@ fileprivate final class WSClient {
 
     func close() {
         guard server.clients.removeValue(forKey: ObjectIdentifier(self)) != nil else { return }
-        if authed { input.release(); print("○ PWA desconectado: \(name)"); server.changed() }
+        if authed { input.release(); Hub.shared.drop(owner: "ws-\(name)"); print("○ PWA desconectado: \(name)"); server.changed() }
         conn.cancel()
     }
 
@@ -127,7 +127,7 @@ fileprivate final class WSClient {
             if error != nil || (data == nil && ctx == nil) { close(); return }
             if let data, let msg = String(data: data, encoding: .utf8) {
                 if authed {
-                    handle(msg) { send($0) }
+                    handle(msg, owner: "ws-\(name)") { [weak self] in self?.send($0) }
                 } else if msg == "a \(PIN)" {
                     authed = true
                     send("ok")

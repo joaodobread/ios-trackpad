@@ -32,27 +32,14 @@ struct ContentView: View {
         ZStack {
             SkinView(id: s.skin, customURL: s.customURL, version: s.skinVersion)
                 .ignoresSafeArea()
-            Color.black.opacity(s.dim).ignoresSafeArea()
+            // nos modos de painel o fundo escurece para os dados ficarem legíveis
+            Color.black.opacity(s.mode == "trackpad" ? s.dim : max(s.dim, 0.45)).ignoresSafeArea()
 
-            if hint {
-                VStack(spacing: 4) {
-                    Text("**1 dedo** mover · toque = clique · toque + arrastar = arrastar")
-                    Text("**2 dedos** rolar · toque = clique direito · pinça = zoom")
-                    Text("**3 dedos** ↑ Mission Control · ↓ Exposé · ←→ mesas · toque = consultar")
-                    Text("**4 dedos** ↓ mostrar mesa")
-                    Text("☀︎ no topo: brilho, volume e mídia").padding(.top, 6)
-                }
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(lightSkin ? Color.black.opacity(0.45) : Color.white.opacity(0.4))
-                .allowsHitTesting(false)
-                .transition(.opacity)
+            switch s.mode {
+            case "monitor": MonitorView()
+            case "apps": AppsView()
+            default: trackpad
             }
-
-            Trackpad { withAnimation(.easeOut(duration: 0.4)) { hint = false } }
-                .ignoresSafeArea()
-
-            KeyboardHost(active: $keyboard).frame(width: 0, height: 0)
 
             VStack {
                 HStack(spacing: 4) {
@@ -64,7 +51,9 @@ struct ContentView: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     Spacer()
                     toolButton("sun.max") { drawer.toggle() }
-                    toolButton(keyboard ? "keyboard.chevron.compact.down" : "keyboard") { keyboard.toggle() }
+                    if s.mode == "trackpad" {
+                        toolButton(keyboard ? "keyboard.chevron.compact.down" : "keyboard") { keyboard.toggle() }
+                    }
                     toolButton("slider.horizontal.3") { settings = true }
                 }
                 .padding(.horizontal, 8)
@@ -82,6 +71,12 @@ struct ContentView: View {
         .defersSystemGestures(on: .all)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $settings) { SettingsView() }
+        .onAppear { subscribe(s.mode) }
+        .onChange(of: s.mode) { _, m in
+            keyboard = false
+            settings = false // trocar de modo fecha os Ajustes e mostra a tela nova
+            subscribe(m)
+        }
         #if DEBUG
         .task {
             // teste automatizado do teclado no simulador: TP_KBTEST=1
@@ -90,6 +85,32 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(2.5)); keyboard = false
         }
         #endif
+    }
+
+    @ViewBuilder private var trackpad: some View {
+        if hint {
+            VStack(spacing: 4) {
+                Text("**1 dedo** mover · toque = clique · toque + arrastar = arrastar")
+                Text("**2 dedos** rolar · toque = clique direito · pinça = zoom")
+                Text("**3 dedos** ↑ Mission Control · ↓ Exposé · ←→ mesas · toque = consultar")
+                Text("**4 dedos** ↓ mostrar mesa")
+                Text("☀︎ no topo: brilho, volume e mídia").padding(.top, 6)
+            }
+            .font(.footnote)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(lightSkin ? Color.black.opacity(0.45) : Color.white.opacity(0.4))
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+
+        Trackpad { withAnimation(.easeOut(duration: 0.4)) { hint = false } }
+            .ignoresSafeArea()
+
+        KeyboardHost(active: $keyboard).frame(width: 0, height: 0)
+    }
+
+    private func subscribe(_ mode: String) {
+        Link.shared.subscribe(mode == "monitor" ? "s" : mode == "apps" ? "a" : "0")
     }
 
     private func toolButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {

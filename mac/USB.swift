@@ -113,7 +113,9 @@ final class USBLink {
                 if Mux.send(fd, ["MessageType": "Connect", "DeviceID": id, "PortNumber": Int(USB_DEVICE_PORT.bigEndian)]),
                    let r = Mux.read(fd), r["Number"] as? Int == 0 {
                     setConnected(id, true)
-                    readLines(fd)
+                    let owner = "usb-\(id)-\(UUID().uuidString)"
+                    readLines(fd, owner: owner)
+                    DispatchQueue.main.sync { Hub.shared.drop(owner: owner) } // antes de fechar o fd
                     setConnected(id, false)
                 }
                 close(fd)
@@ -134,7 +136,7 @@ final class USBLink {
         }
     }
 
-    private func readLines(_ fd: Int32) {
+    private func readLines(_ fd: Int32, owner: String) {
         var buf = [UInt8]()
         var chunk = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -148,7 +150,7 @@ final class USBLink {
             }
             if !lines.isEmpty {
                 DispatchQueue.main.async {
-                    for l in lines { handle(l) { _ = Mux.writeAll(fd, Data(($0 + "\n").utf8)) } }
+                    for l in lines { handle(l, owner: owner) { _ = Mux.writeAll(fd, Data(($0 + "\n").utf8)) } }
                 }
             }
         }

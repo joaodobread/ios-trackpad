@@ -17,6 +17,8 @@ final class Settings: ObservableObject {
     @Published var skin: String { didSet { d.set(skin, forKey: "skin") } }
     @Published var customURL: String { didSet { d.set(customURL, forKey: "customURL") } }
     @Published var dim: Double { didSet { d.set(dim, forKey: "dim") } }
+    /// "trackpad", "monitor" ou "apps"
+    @Published var mode: String { didSet { d.set(mode, forKey: "mode") } }
     /// muda quando a foto da skin é trocada, para recarregar a mídia
     @Published var skinVersion = 0
     /// resultado do último carregamento de mídia (mostrado nos Ajustes)
@@ -27,7 +29,7 @@ final class Settings: ObservableObject {
     private init() {
         d.register(defaults: [
             "speed": 1.8, "accel": 0.9, "scroll": 1.2, "natural": true, "momentum": true, "haptics": true,
-            "threeFingerDrag": false, "skin": "grafite", "customURL": "", "dim": 0.0,
+            "threeFingerDrag": false, "skin": "grafite", "customURL": "", "dim": 0.0, "mode": "trackpad",
         ])
         speed = d.double(forKey: "speed")
         accel = d.double(forKey: "accel")
@@ -39,6 +41,7 @@ final class Settings: ObservableObject {
         skin = d.string(forKey: "skin") ?? "grafite"
         customURL = d.string(forKey: "customURL") ?? ""
         dim = d.double(forKey: "dim")
+        mode = d.string(forKey: "mode") ?? "trackpad"
     }
 
     func savePhoto(_ data: Data) throws {

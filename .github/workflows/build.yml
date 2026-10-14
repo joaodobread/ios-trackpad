@@ -1,0 +1,25 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: App do Mac
+        run: swiftc -O -swift-version 5 mac/*.swift -o TracePad
+
+      - name: App do iPhone (sem assinatura)
+        run: |
+          xcodebuild -project ios/TracePad.xcodeproj -scheme TracePad \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build -quiet
+
+      - name: PWA (sintaxe do JS)
+        run: |
+          python3 -c "import re;s=open('web/index.html').read();open('app.js','w').write(re.search(r'<script>(.*)</script>',s,re.S).group(1))"
+          node --check app.js

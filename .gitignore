@@ -1,0 +1,13 @@
+# builds
+build/
+DerivedData/
+*.xcresult
+
+# Xcode (estado pessoal)
+xcuserdata/
+*.xcuserstate
+ios/TracePad.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# macOS
+.DS_Store
+ios/local.env

@@ -151,6 +151,8 @@ private struct Sparkline: Shape {
 struct AppsView: View {
     @ObservedObject private var link = Link.shared
     @State private var picking: MacApp?
+    @State private var launcher = false
+    @State private var query = ""
     private let tap = UIImpactFeedbackGenerator(style: .rigid)
 
     var body: some View {
@@ -161,6 +163,7 @@ struct AppsView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 12)], spacing: 12) {
                         ForEach(link.apps) { app in tile(app) }
+                        addTile
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 54)
@@ -169,9 +172,91 @@ struct AppsView: View {
                 .scrollIndicators(.hidden)
             }
             if let app = picking { windowPicker(app) }
+            if launcher { launcherView }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.18), value: picking?.pid)
+        .animation(.easeOut(duration: 0.18), value: launcher)
+    }
+
+    private var addTile: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "plus")
+                .font(.system(size: 26, weight: .medium))
+                .frame(width: 64, height: 64)
+                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Text("Abrir app").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            query = ""
+            link.send("L")
+            launcher = true
+            haptic()
+        }
+    }
+
+    /// Apps instalados no Mac, com busca. Ícones carregam conforme aparecem.
+    private var launcherView: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let list = q.isEmpty ? link.installed : link.installed.filter { $0.name.localizedCaseInsensitiveContains(q) }
+        return ZStack {
+            Color.black.opacity(0.5).ignoresSafeArea().onTapGesture { launcher = false }
+            VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Buscar app no Mac", text: $query)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.go)
+                        .onSubmit { if let first = list.first { launch(first) } }
+                    Button { launcher = false } label: { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(.secondary) }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                if link.installed.isEmpty {
+                    ProgressView().tint(.white).frame(maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                            ForEach(list) { app in
+                                VStack(spacing: 4) {
+                                    Group {
+                                        if let img = link.installedIcons[app.name] {
+                                            Image(uiImage: img).resizable().interpolation(.high)
+                                        } else {
+                                            RoundedRectangle(cornerRadius: 11).fill(.white.opacity(0.1))
+                                        }
+                                    }
+                                    .frame(width: 48, height: 48)
+                                    Text(app.name).font(.caption2).lineLimit(1)
+                                    Circle().fill(app.running ? Color.white.opacity(0.7) : .clear).frame(width: 4, height: 4)
+                                }
+                                .padding(6)
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
+                                .onAppear { link.requestIcon(app) }
+                                .onTapGesture { launch(app) }
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                    .scrollDismissesKeyboard(.immediately)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: 640, maxHeight: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.top, 48).padding(.bottom, 10)
+        }
+        .transition(.opacity)
+    }
+
+    private func launch(_ app: InstalledApp) {
+        link.send("o \(app.id)")
+        haptic()
+        launcher = false
     }
 
     private func haptic() { if Settings.shared.haptics { tap.impactOccurred(intensity: 0.8) } }

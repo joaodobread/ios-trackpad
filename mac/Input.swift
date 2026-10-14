@@ -165,6 +165,8 @@ let input = Input()
 //   a pid / h pid / Q pid   ativar / ocultar / encerrar app
 //   W pid              janelas do app → "W pid índice␟título␟minimizada\t…"
 //   f pid índice título     foca uma janela específica
+//   L                  apps instalados → "L índice␟nome␟aberto\t…"
+//   j índice / o índice     ícone ("J índice base64png") / abrir app instalado
 
 /// owner identifica a conexão (para cancelar assinaturas quando ela cair).
 func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void = { _ in }) {
@@ -198,6 +200,9 @@ func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void
     case "h": Hub.shared.apps.hide(pid_t(d(1)))
     case "Q": Hub.shared.apps.quit(pid_t(d(1)))
     case "W": reply(Hub.shared.apps.windows(pid_t(d(1))))
+    case "L": reply(Hub.shared.apps.installedList())
+    case "j": if let r = Hub.shared.apps.installedIcon(Int(d(1))) { reply(r) }
+    case "o": Hub.shared.apps.launch(Int(d(1)))
     default: break
     }
 }

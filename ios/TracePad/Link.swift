@@ -27,6 +27,11 @@ struct MacApp: Identifiable {
     let pid: Int, active: Bool, hidden: Bool, name: String, key: String, windows: Int
 }
 
+struct InstalledApp: Identifiable {
+    let id: Int // índice na lista do Mac
+    let name: String, running: Bool
+}
+
 struct MacWindow: Identifiable {
     let id: Int // índice
     let title: String, minimized: Bool
@@ -50,6 +55,10 @@ final class Link: NSObject, ObservableObject {
     @Published private(set) var processes = [MacProcess]()
     @Published private(set) var apps = [MacApp]()
     @Published private(set) var icons = [String: UIImage]()
+    /// apps instalados no Mac ("L"); ícones por nome, pedidos sob demanda
+    @Published private(set) var installed = [InstalledApp]()
+    @Published private(set) var installedIcons = [String: UIImage]()
+    private var installedRequested = Set<String>()
     /// janelas do app pedido por último ("W pid")
     @Published private(set) var windows: (pid: Int, list: [MacWindow])?
     private var iconRequested = Set<String>()
@@ -152,7 +161,7 @@ final class Link: NSObject, ObservableObject {
         let t: Transport = usb?.state == .ready ? .usb : subscribers.isEmpty ? .none : .ble
         if t != transport {
             transport = t
-            if t == .none { iconRequested.removeAll() }
+            if t == .none { iconRequested.removeAll(); installedRequested.removeAll() }
             if t != .none, subscription != "0" { DispatchQueue.main.async { self.send("w \(self.subscription)") } }
         }
         if t != .ble { queue.removeAll() }
@@ -216,6 +225,8 @@ final class Link: NSObject, ObservableObject {
             case "A": parseApps(body)
             case "I": parseIcon(body)
             case "W": parseWindows(body)
+            case "L": parseInstalled(body)
+            case "J": parseInstalledIcon(body)
             default: break
             }
         }
@@ -273,6 +284,27 @@ final class Link: NSObject, ObservableObject {
     }
 
     func clearWindows() { windows = nil }
+
+    private func parseInstalled(_ body: Substring) {
+        installed = body.split(separator: "\t").compactMap { row in
+            let f = row.split(separator: "\u{1f}", omittingEmptySubsequences: false)
+            guard f.count >= 3, let i = Int(f[0]) else { return nil }
+            return InstalledApp(id: i, name: String(f[1]), running: f[2] == "1")
+        }
+    }
+
+    private func parseInstalledIcon(_ body: Substring) {
+        let a = body.split(separator: " ", maxSplits: 1)
+        guard a.count == 2, let i = Int(a[0]), let app = installed.first(where: { $0.id == i }),
+              let data = Data(base64Encoded: String(a[1])), let img = UIImage(data: data) else { return }
+        installedIcons[app.name] = img
+    }
+
+    /// Pede o ícone quando o app aparece na tela (lazy), uma vez por nome.
+    func requestIcon(_ app: InstalledApp) {
+        guard installedIcons[app.name] == nil, installedRequested.insert(app.name).inserted else { return }
+        send("j \(app.id)")
+    }
 
     private func parseIcon(_ body: Substring) {
         let a = body.split(separator: " ", maxSplits: 1)

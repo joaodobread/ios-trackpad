@@ -34,6 +34,8 @@ echo 'TEAM=SEU_TEAM_ID' > ios/local.env   # uma vez; ID em Xcode › Ajustes ›
 
 Bluetooth: na primeira conexão o iPhone e o Mac pedem para parear (a característica GATT exige criptografia).
 
+Dica: para bloquear de vez a barra de Início, a Central de Controle e as notificações enquanto usa, ative o **Acesso Guiado** (Ajustes › Acessibilidade) e clique três vezes no botão lateral com o TracePad aberto.
+
 ## Gestos
 
 | Dedos | Ação |
@@ -53,7 +55,7 @@ Troque em Ajustes › Modo:
 
 - **Trackpad** — o padrão.
 - **Monitor** — CPU, GPU, memória e disco em medidores, rede, bateria, histórico de CPU e processos que mais consomem (atualiza a cada 1 s).
-- **Apps** — apps abertos em ordem alfabética, estilo ⌘-Tab. Toque para trazer para frente; apps com várias janelas mostram um número e abrem a lista para escolher a janela. Segure para ocultar ou encerrar.
+- **Apps** — apps abertos em ordem alfabética, estilo ⌘-Tab. Toque para trazer para frente; apps com várias janelas mostram um número e abrem a lista para escolher a janela. Segure para ocultar ou encerrar. O bloco **+ Abrir app** lista os apps instalados no Mac, com busca.
 
 ## Protocolo
 

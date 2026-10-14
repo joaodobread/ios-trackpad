@@ -72,16 +72,48 @@ final class AppsWatcher {
 
     /// "I chave base64png"
     func icon(_ pid: pid_t) -> String? {
-        guard let a = NSRunningApplication(processIdentifier: pid), let icon = a.icon else { return nil }
-        let px = 96
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
-                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        icon.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
-        NSGraphicsContext.restoreGraphicsState()
-        guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
-        return "I \(iconKey(a)) \(png.base64EncodedString())"
+        guard let a = NSRunningApplication(processIdentifier: pid), let icon = a.icon, let png = pngBase64(icon) else { return nil }
+        return "I \(iconKey(a)) \(png)"
+    }
+
+    // MARK: apps instalados (abrir pelo iPhone)
+
+    private var installed = [URL]()
+
+    /// "L índice␟nome␟aberto\t…" — apps das pastas de Aplicativos (e uma subpasta abaixo), em ordem alfabética.
+    func installedList() -> String {
+        let fm = FileManager.default
+        let dirs = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+                    NSHomeDirectory() + "/Applications"]
+        var seen = Set<String>()
+        var urls = [URL]()
+        func add(_ u: URL) { if u.pathExtension == "app", seen.insert(u.lastPathComponent).inserted { urls.append(u) } }
+        for d in dirs {
+            for u in (try? fm.contentsOfDirectory(at: URL(fileURLWithPath: d), includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? [] {
+                if u.pathExtension == "app" { add(u); continue }
+                // pastas como "Microsoft Office" com apps dentro
+                for v in (try? fm.contentsOfDirectory(at: u, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? [] { add(v) }
+            }
+        }
+        func name(_ u: URL) -> String { fm.displayName(atPath: u.path).replacingOccurrences(of: ".app", with: "") }
+        installed = urls.sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending }
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleURL?.standardizedFileURL.path })
+        return "L " + installed.enumerated().map { i, u in
+            "\(i)\u{1f}\(clean(name(u)))\u{1f}\(running.contains(u.standardizedFileURL.path) ? 1 : 0)"
+        }.joined(separator: "\t")
+    }
+
+    /// "J índice base64png"
+    func installedIcon(_ i: Int) -> String? {
+        guard installed.indices.contains(i), let png = pngBase64(NSWorkspace.shared.icon(forFile: installed[i].path)) else { return nil }
+        return "J \(i) \(png)"
+    }
+
+    func launch(_ i: Int) {
+        guard installed.indices.contains(i) else { return }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.openApplication(at: installed[i], configuration: cfg)
     }
 
     /// Traz para frente. openApplication é o caminho confiável a partir de um app de fundo
@@ -102,6 +134,18 @@ final class AppsWatcher {
 
     func hide(_ pid: pid_t) { NSRunningApplication(processIdentifier: pid)?.hide() }
     func quit(_ pid: pid_t) { NSRunningApplication(processIdentifier: pid)?.terminate() }
+}
+
+/// Ícone 96×96 em PNG base64.
+private func pngBase64(_ icon: NSImage) -> String? {
+    let px = 96
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
+                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    icon.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+    NSGraphicsContext.restoreGraphicsState()
+    return rep.representation(using: .png, properties: [:])?.base64EncodedString()
 }
 
 private func iconKey(_ a: NSRunningApplication) -> String {

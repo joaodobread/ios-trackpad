@@ -1,12 +1,13 @@
-// PWA por Wi-Fi: HTTP estático (:8787) + WebSocket (:8788) autenticado por PIN.
+// PWA por Wi-Fi: HTTP estático (:8787, TRACEPAD_PORT) + WebSocket (porta seguinte) autenticado por PIN.
 
 import Foundation
 import Network
 import CoreImage
 import SystemConfiguration
 
-let HTTP_PORT: UInt16 = 8787
-let WS_PORT: UInt16 = 8788
+/// PWA; o WebSocket fica na porta seguinte. Mude com TRACEPAD_PORT (ex.: launchctl setenv TRACEPAD_PORT 9000).
+let HTTP_PORT: UInt16 = ProcessInfo.processInfo.environment["TRACEPAD_PORT"].flatMap { UInt16($0) } ?? 8787
+let WS_PORT: UInt16 = HTTP_PORT + 1
 
 let pinURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tracepad-pin")
 let PIN: String = {

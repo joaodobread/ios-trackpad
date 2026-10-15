@@ -395,7 +395,7 @@ $('#skinFile').onchange = async e => {
 applySkin();
 
 // ---------- conexão ----------
-const WS_PORT = 8788;
+const WS_PORT = (+location.port || 80) + 1; // o WebSocket fica sempre na porta seguinte à do HTTP (TRACEPAD_PORT)
 let ws = null, ok = false, retry = 0;
 let pin = new URLSearchParams(location.search).get('k') || ls.get('tp.pin');
 if (location.search) history.replaceState(null, '', location.pathname);

@@ -63,12 +63,12 @@ $s.Save()
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
   [Security.Principal.WindowsBuiltInRole]::Administrator)
+$port = if ($env:TRACEPAD_PORT) { [int]$env:TRACEPAD_PORT } else { 8787 } # o WebSocket fica na seguinte
 if ($admin) {
-  if (-not (Get-NetFirewallRule -DisplayName "TracePad" -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName "TracePad" -Direction Inbound -Protocol TCP -LocalPort 8787, 8788 -Action Allow `
-      -Profile Private, Domain | Out-Null
-  }
-  Write-Host "Firewall: portas 8787/8788 liberadas nas redes privadas (PWA por Wi-Fi)."
+  Get-NetFirewallRule -DisplayName "TracePad" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  New-NetFirewallRule -DisplayName "TracePad" -Direction Inbound -Protocol TCP -LocalPort $port, ($port + 1) -Action Allow `
+    -Profile Private, Domain | Out-Null
+  Write-Host "Firewall: portas $port/$($port + 1) liberadas nas redes privadas (PWA por Wi-Fi)."
 } else {
   Write-Host "Firewall: na primeira vez o Windows pergunta; permita em 'Redes privadas' (ou rode como administrador)."
 }

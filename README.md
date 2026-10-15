@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File windows\install.ps1   # dependências (
 Ou rode direto: `python windows\tracepad.py` (ou `pythonw`, sem janela; o log vai para `~\.tracepad.log`). Mouse, teclado, Apps e área de transferência vão por ctypes; `windows\requirements.txt` liga o resto: `psutil` (Monitor, Wake-on-LAN), `bleak` (Bluetooth), `pycaw` (volume), `wmi` (brilho), `winrt-Windows.Media.Control` (tocando agora) e `Pillow` (capa menor).
 
 - **USB:** precisa do Apple Mobile Device Service, que vem com o app **Dispositivos Apple** (Microsoft Store) ou o iTunes. Plugue o iPhone desbloqueado e toque em **Confiar**.
-- **PWA:** permita o firewall em **Redes privadas** (o instalador libera 8787/8788 se rodar como administrador).
+- **PWA:** permita o firewall em **Redes privadas** (o instalador libera as portas do PWA se rodar como administrador).
 - **Teclas:** ⌘ vira Ctrl (ou Windows com `TRACEPAD_CMD=win`) e ❖ é a tecla Windows. Gestos padrão: Win+Tab, Win+D, Ctrl+Win+←/→ e Ctrl+=/−, redefiníveis com `@nome` em `~\.tracepad-actions`; ações rodam no `cmd` (ou PowerShell com `TRACEPAD_SHELL=powershell`).
 
 ## Instalar por pacote
@@ -166,7 +166,11 @@ Linhas de texto, iguais em todos os transportes, nos dois sentidos (lista comple
 
 - USB: iPhone escuta em `localhost:2345`; o Mac conecta pelo usbmuxd.
 - BLE: serviço `6E7A0001-…`, característica de notify `6E7A0002-…`.
-- PWA: HTTP `:8787`, WebSocket `:8788`, PIN em `~/.tracepad-pin`.
+- PWA: HTTP `:8787`, WebSocket na porta seguinte (`:8788`), PIN em `~/.tracepad-pin`. Mude com `TRACEPAD_PORT` (o WebSocket acompanha):
+  - Linux (serviço): `systemctl --user edit tracepad` → `[Service]` / `Environment=TRACEPAD_PORT=9000`, depois `systemctl --user restart tracepad`.
+  - Windows: `setx TRACEPAD_PORT 9000` antes de rodar o `install.ps1` (que libera as portas no firewall).
+  - Mac: `launchctl setenv TRACEPAD_PORT 9000` e reabra o app.
+- A porta do USB (`2345`, no iPhone) é fixa.
 
 ## Contribuindo
 

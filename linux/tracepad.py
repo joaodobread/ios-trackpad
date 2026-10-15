@@ -38,7 +38,8 @@ except AttributeError:
 
 HOME = os.path.expanduser("~")
 HERE = os.path.dirname(os.path.abspath(__file__))
-HTTP_PORT, WS_PORT = 8787, 8788
+HTTP_PORT = int(os.environ.get("TRACEPAD_PORT") or 8787)  # PWA; o WebSocket fica na porta seguinte
+WS_PORT = HTTP_PORT + 1
 USB_DEVICE_PORT = 2345
 BLE_SERVICE = "6e7a0001-5c3b-4a8e-9f2d-7a1c0de5a001"
 BLE_COMMANDS = "6e7a0002-5c3b-4a8e-9f2d-7a1c0de5a001"
@@ -1465,7 +1466,7 @@ async def ble_loop():
         await asyncio.sleep(wait)
 
 
-# MARK: - PWA por Wi-Fi: HTTP estático (:8787) + WebSocket (:8788) autenticado por PIN
+# MARK: - PWA por Wi-Fi: HTTP estático (:8787, TRACEPAD_PORT) + WebSocket (porta seguinte) autenticado por PIN
 
 MIME = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
         "json": "application/manifest+json", "webmanifest": "application/manifest+json", "png": "image/png", "svg": "image/svg+xml"}

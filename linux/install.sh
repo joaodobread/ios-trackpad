@@ -9,8 +9,8 @@ echo "Instalando dependências…"
 # X11 usa wmctrl/xdotool; Wayland usa wtype/wl-clipboard (no Hyprland/Omarchy o modo Apps vai pelo hyprctl)
 if command -v apt-get >/dev/null; then
   sudo apt-get install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl \
-    wmctrl xdotool xclip wtype wl-clipboard playerctl python3-pip || true
-  sudo apt-get install -y python3-bleak 2>/dev/null || pip3 install --user bleak 2>/dev/null || pip3 install --user --break-system-packages bleak || true
+    wmctrl xdotool xclip wtype wl-clipboard playerctl python3-venv || true
+  sudo apt-get install -y python3-bleak 2>/dev/null || true
 elif command -v dnf >/dev/null; then
   sudo dnf install -y python3-evdev python3-psutil usbmuxd libimobiledevice-utils pulseaudio-utils brightnessctl \
     wmctrl xdotool xclip wtype wl-clipboard playerctl python3-bleak || true
@@ -18,16 +18,26 @@ elif command -v pacman >/dev/null; then
   # Arch e Omarchy (que já traz wtype, wl-clipboard, libpulse, brightnessctl e o agente de pareamento bt-agent)
   sudo pacman -S --needed --noconfirm python-evdev python-psutil usbmuxd libimobiledevice libpulse brightnessctl wtype wl-clipboard playerctl || true
   [ -z "$WAYLAND_DISPLAY" ] && sudo pacman -S --needed --noconfirm wmctrl xdotool xclip || true
-  if ! python3 -c "import bleak" 2>/dev/null; then
-    sudo pacman -S --needed --noconfirm python-bleak 2>/dev/null \
-      || { command -v yay >/dev/null && yay -S --needed --noconfirm python-bleak; } \
-      || pip install --user --break-system-packages bleak || true
-  fi
+  python3 -c "import bleak" 2>/dev/null || sudo pacman -S --needed --noconfirm python-bleak || true
 else
-  echo "Gerenciador de pacotes não reconhecido: instale python3-evdev, psutil, bleak e usbmuxd manualmente."
+  echo "Gerenciador de pacotes não reconhecido: instale usbmuxd (e, se quiser, pactl, brightnessctl, playerctl) manualmente."
+fi
+
+# O que a distro não tem (ou o pip não deixa instalar no Python do sistema — PEP 668) vai para um venv
+# que enxerga os pacotes do sistema; o serviço passa a rodar com o Python dele.
+PY=python3
+MISSING=""
+for m in evdev psutil bleak; do python3 -c "import $m" 2>/dev/null || MISSING="$MISSING $m"; done
+if [ -n "$MISSING" ]; then
+  VENV="$HOME/.local/share/tracepad/venv"
+  echo "Instalando num venv ($VENV):$MISSING"
+  # evdev compila uma extensão em C: precisa de gcc e dos headers do kernel/Python
+  python3 -m venv --system-site-packages "$VENV" && "$VENV/bin/pip" install -q $MISSING && PY="$VENV/bin/python" \
+    || echo "⚠️  Não deu para instalar:$MISSING (sem evdev não há mouse/teclado; sem bleak, só USB e Wi-Fi)"
 fi
 
 echo "Liberando /dev/uinput para o usuário logado…"
+sudo mkdir -p /etc/modules-load.d /etc/udev/rules.d
 echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-tracepad-uinput.rules >/dev/null
 echo uinput | sudo tee /etc/modules-load.d/tracepad-uinput.conf >/dev/null
 sudo modprobe uinput
@@ -42,7 +52,7 @@ PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/env python3 $DIR/linux/tracepad.py $DIR/web
+ExecStart=$( [ "$PY" = python3 ] && echo "/usr/bin/env python3" || echo "$PY" ) $DIR/linux/tracepad.py $DIR/web
 Restart=on-failure
 
 [Install]

@@ -1,0 +1,47 @@
+# Maintainer: João Victor <joaovictorslf at gmail dot com>
+pkgname=tracepad
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Use o iPhone como trackpad do computador (host Linux: USB, Wi-Fi e Bluetooth)"
+arch=('any')
+url="https://github.com/joaodobread/ios-trackpad"
+license=('MIT')
+depends=('python' 'python-evdev' 'python-psutil' 'usbmuxd' 'libimobiledevice')
+optdepends=(
+  'python-bleak: conexão por Bluetooth (BLE)'
+  'libpulse: controle de volume (pactl)'
+  'brightnessctl: controle de brilho da tela'
+  'wtype: digitar texto no Wayland'
+  'wl-clipboard: colar texto no Wayland'
+  'playerctl: controle de mídia (tocar/pausar, próxima faixa)'
+  'xclip: área de transferência no X11'
+  'wmctrl: listar e focar janelas no X11'
+  'xdotool: digitar texto e focar janelas no X11'
+  'qrencode: mostrar o QR code do PWA nos logs'
+)
+install=tracepad.install
+source=("$pkgname-$pkgver.tar.gz::https://github.com/joaodobread/ios-trackpad/archive/refs/tags/v$pkgver.tar.gz"
+        'tracepad.sh'
+        'tracepad.service'
+        '60-tracepad-uinput.rules'
+        'tracepad-uinput.conf')
+sha256sums=('SKIP'
+            '63dbfdfa6e6a44abd00a634a0741ba0064d65f2c531f74efd7acaebf7aee492f'
+            '7828045ab52285e0be11ebc0cf31f0e5daa4c05d82f9d8e8d541706711a9ccf4'
+            '27e69cdde6bcbb696b345efc7646c9be04357243dd8afa3f0a5c521d5cd87b1b'
+            'a771c9695d7283f7771adc00b680bd27391e6ac00e9fd026f4796067ee9a87eb')
+
+package() {
+  cd "ios-trackpad-$pkgver"
+  install -Dm644 linux/tracepad.py "$pkgdir/usr/share/tracepad/tracepad.py"
+  install -dm755 "$pkgdir/usr/share/tracepad/web"
+  cp -r --no-preserve=ownership web/. "$pkgdir/usr/share/tracepad/web/"
+  find "$pkgdir/usr/share/tracepad/web" -type d -exec chmod 755 {} +
+  find "$pkgdir/usr/share/tracepad/web" -type f -exec chmod 644 {} +
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  install -Dm755 "$srcdir/tracepad.sh" "$pkgdir/usr/bin/tracepad"
+  install -Dm644 "$srcdir/tracepad.service" "$pkgdir/usr/lib/systemd/user/tracepad.service"
+  install -Dm644 "$srcdir/60-tracepad-uinput.rules" "$pkgdir/usr/lib/udev/rules.d/60-tracepad-uinput.rules"
+  install -Dm644 "$srcdir/tracepad-uinput.conf" "$pkgdir/usr/lib/modules-load.d/tracepad-uinput.conf"
+}

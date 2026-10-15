@@ -18,6 +18,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>O TracePad lê a música que está tocando no Música e no Spotify para mostrar no iPhone.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>O TracePad usa Bluetooth para receber os gestos do iPhone sem fio.</string>
 	<key>NSLocalNetworkUsageDescription</key>

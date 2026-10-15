@@ -39,6 +39,8 @@ struct ContentView: View {
             case "monitor": MonitorView()
             case "apps": AppsView()
             case "actions": ActionsView()
+            case "media": NowPlayingView()
+            case "present": PresentationView()
             default: trackpad
             }
 
@@ -54,6 +56,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
+                status
                 Spacer()
             }
 
@@ -66,6 +69,8 @@ struct ContentView: View {
         .persistentSystemOverlays(.hidden)
         .defersSystemGestures(on: .all)
         .preferredColorScheme(.dark)
+        .animation(.spring(response: 0.3), value: link.notice)
+        .animation(.spring(response: 0.3), value: link.transferProgress == nil)
         .sheet(isPresented: $settings) { SettingsView() }
         .onAppear { subscribe(s.mode) }
         .onChange(of: s.mode) { _, m in
@@ -124,8 +129,27 @@ struct ContentView: View {
         }
     }
 
+    /// Aviso rápido e progresso do envio de arquivo.
+    @ViewBuilder private var status: some View {
+        if let p = link.transferProgress {
+            HStack(spacing: 10) {
+                ProgressView(value: p).frame(width: 120).tint(.white)
+                Text(p >= 1 ? "Salvando…" : "Enviando \(Int(p * 100))%").font(.caption.monospacedDigit())
+                Button { link.cancelTransfer() } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .transition(.move(edge: .top).combined(with: .opacity))
+        } else if let n = link.notice {
+            Text(n).font(.footnote.weight(.medium))
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(.ultraThinMaterial, in: Capsule())
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
     private var hostLabel: String {
-        let os = link.hostOS == "linux" ? "Linux" : link.hostOS == "mac" ? "Mac" : nil
+        let os = osName(link.hostOS)
         switch (os, link.hostName) {
         case let (os?, name?) where !name.isEmpty: return "\(os) · \(name)"
         case let (os?, _): return os
@@ -134,7 +158,7 @@ struct ContentView: View {
     }
 
     private func subscribe(_ mode: String) {
-        Link.shared.subscribe(mode == "monitor" ? "s" : mode == "apps" ? "a" : "0")
+        Link.shared.subscribe(mode == "monitor" ? "s" : mode == "apps" ? "a" : mode == "media" ? "n" : "0")
     }
 
     private func toolButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
@@ -155,8 +179,8 @@ struct PeerPicker: View {
     var body: some View {
         ForEach(link.peers) { p in
             Button { link.select(p.id) } label: {
-                Label(p.label + (p.os == "linux" ? " (Linux)" : p.os == "mac" ? " (Mac)" : ""),
-                      systemImage: p.id == link.activePeer ? "checkmark" : (p.os == "linux" ? "pc" : "laptopcomputer"))
+                Label(p.label + (osName(p.os).map { " (\($0))" } ?? ""),
+                      systemImage: p.id == link.activePeer ? "checkmark" : (p.os == "mac" || p.os == nil ? "laptopcomputer" : "pc"))
             }
         }
     }

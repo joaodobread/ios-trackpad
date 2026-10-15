@@ -165,7 +165,8 @@ let hostHello = "H mac " + clean(Host.current().localizedName ?? "Mac")
 //   z                  alterna mudo
 //   x tecla            tecla de mídia (16 play/pause, 17 próxima, 18 anterior)
 //   q                  pede o estado → responde "S volume brilho mudo"
-//   w s|a|0            assina dados contínuos: monitor ("T …", "P …") / apps ("A …") / nada
+//   w s|a|n|0          assina dados contínuos: monitor ("T …", "P …") / apps ("A …") /
+//                      tocando agora ("N estado\tduração\tposição\ttítulo\tartista\tálbum\tapp" e capa "M base64jpg") / nada
 //   l                  lista de apps → "A …"
 //   i pid              ícone do app → "I chave base64png"
 //   a pid / h pid / Q pid   ativar / ocultar / encerrar app
@@ -176,6 +177,10 @@ let hostHello = "H mac " + clean(Host.current().localizedName ?? "Mac")
 //   C                  ações de shell do computador → "C nome\tnome…" (de ~/.tracepad-actions)
 //   r nome             roda a ação de shell com esse nome
 //   O alvo             abre URL ou app pelo nome
+//   y / Y base64       pede a área de transferência ("Y base64") / define (texto UTF-8)
+//   F nome, D base64…, E   arquivo para ~/Downloads → "E ok caminho" ou "E erro mensagem"
+//   K                  rede deste computador → "K mac broadcast" (o iPhone guarda para o Wake-on-LAN)
+//   R mac [broadcast]  manda o pacote mágico para acordar outro computador da rede
 
 /// owner identifica a conexão (para cancelar assinaturas quando ela cair).
 func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void = { _ in }) {
@@ -183,6 +188,10 @@ func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void
     if op == "t" { input.type(String(msg.dropFirst(2))); return }
     if op == "r" { Actions.run(String(msg.dropFirst(2))); return }
     if op == "O" { Actions.open(String(msg.dropFirst(2))); return }
+    if op == "F" { FileReceiver.shared.begin(String(msg.dropFirst(2)), owner: owner); return }
+    if op == "D" { FileReceiver.shared.data(msg.dropFirst(2), owner: owner); return }
+    if op == "E" { FileReceiver.shared.end(owner: owner, reply: reply); return }
+    if op == "Y" { Clipboard.set(msg.dropFirst(2)); return }
     if op == "f" { // o título pode ter espaços: tudo depois do índice
         let p = msg.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
         if p.count >= 3, let pid = pid_t(p[1]), let i = Int(p[2]) { Hub.shared.apps.focusWindow(pid, index: i, title: p.count > 3 ? String(p[3]) : "") }
@@ -217,6 +226,9 @@ func handle(_ msg: String, owner: String = "", reply: @escaping (String) -> Void
     case "o": Hub.shared.apps.launch(Int(d(1)))
     case "C": reply(Actions.list())
     case "g": Actions.gesture(String(s(1)))
+    case "y": reply(Clipboard.line)
+    case "K": if let l = WakeOnLAN.line { reply(l) }
+    case "R": WakeOnLAN.wake(s(1), broadcast: s(2))
     default: break
     }
 }

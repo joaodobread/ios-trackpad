@@ -1,0 +1,20 @@
+post_install() {
+  modprobe uinput 2>/dev/null || true
+  udevadm trigger --name-match=uinput 2>/dev/null || true
+  cat <<MSG
+==> Para iniciar o TracePad junto com a sessão gráfica, rode como seu usuário (sem sudo):
+      systemctl --user enable --now tracepad
+==> Logs e PIN do PWA: journalctl --user -u tracepad -f
+==> USB: com o iPhone plugado e desbloqueado, rode uma vez 'idevicepair pair' e toque em Confiar.
+==> Se o mouse não mexer, saia e entre de novo na sessão (para o acesso ao /dev/uinput valer).
+MSG
+}
+
+post_upgrade() {
+  modprobe uinput 2>/dev/null || true
+  echo "==> Reinicie o serviço: systemctl --user restart tracepad"
+}
+
+post_remove() {
+  echo "==> Se tinha habilitado: systemctl --user disable --now tracepad"
+}

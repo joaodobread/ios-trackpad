@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -170,7 +171,7 @@ class Input:
             self.kbd = UInput({E.EV_KEY: list(range(1, 249))}, name="TracePad Keyboard")
         except Exception as e:  # OSError ou UInputError, conforme a versão do evdev
             self.mouse = self.kbd = None
-            log("✗ sem acesso a /dev/uinput (%s). Rode linux/install.sh ou veja o README." % e)
+            log("✗ sem acesso a /dev/uinput (%s). Rode linux/install.sh (ou, pelo pacote, saia e entre de novo na sessão) ou veja o README." % e)
 
     def _w(self, dev, typ, code, val):
         dev.write(typ, code, val)
@@ -908,6 +909,223 @@ class Actions:
 
 actions = Actions()
 
+# MARK: - Tocando agora (MPRIS via playerctl), área de transferência, arquivos e Wake-on-LAN
+
+
+class NowPlaying:
+    FMT = "\t".join(["{{status}}", "{{mpris:length}}", "{{position}}", "{{title}}", "{{artist}}", "{{album}}",
+                     "{{playerName}}", "{{mpris:artUrl}}"])
+
+    def __init__(self):
+        self.reset()
+        self.warned = False
+
+    def reset(self):
+        self.last_line = ""
+        self.last_art = None
+
+    def read(self):
+        """(linha "N …", chave da faixa, url da capa) — roda numa thread (playerctl pode demorar)."""
+        if not which("playerctl"):
+            if not self.warned:
+                log("⚠️  Tocando agora: instale playerctl")
+                self.warned = True
+            return "N stopped", "", ""
+        out = run(["playerctl", "metadata", "--format", self.FMT])
+        f = (out or "").rstrip("\n").split("\t")
+        if len(f) < 8 or f[0] not in ("Playing", "Paused"):
+            return "N stopped", "", ""
+
+        def sec(us):
+            try:
+                return float(us) / 1e6
+            except ValueError:
+                return -1.0
+        app = f[6].split(".")[0].capitalize()
+        line = "N %s\t%.1f\t%.0f\t%s\t%s\t%s\t%s" % (f[0].lower(), sec(f[1]), sec(f[2]), clean(f[3]), clean(f[4]),
+                                                    clean(f[5]), clean(app))
+        return line, US.join(f[3:6]), f[7]
+
+    @staticmethod
+    def artwork(url):
+        data = b""
+        try:
+            if url.startswith("file://"):
+                with open(urllib.parse.unquote(url[7:]), "rb") as fh:
+                    data = fh.read(400000)
+            elif url.startswith(("http://", "https://")):
+                with urllib.request.urlopen(url, timeout=4) as r:
+                    data = r.read(400000)
+        except (OSError, ValueError):
+            return ""
+        if which("magick") or which("convert"):  # reduz se o ImageMagick estiver por aí (o Bluetooth agradece)
+            try:
+                small = subprocess.run(["magick" if which("magick") else "convert", "-", "-resize", "240x240", "-quality", "75", "jpg:-"],
+                                       input=data, capture_output=True, timeout=4).stdout
+                data = small or data
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return base64.b64encode(data).decode() if data and len(data) < 300000 else ""
+
+    async def push(self, reply):
+        loop = asyncio.get_event_loop()
+        line, key, art = await loop.run_in_executor(None, self.read)
+        if line != self.last_line:
+            self.last_line = line
+            reply(line)
+        if key != self.last_art:
+            self.last_art = key
+            reply("M " + ((await loop.run_in_executor(None, self.artwork, art)) if key and art else ""))
+
+
+now_playing = NowPlaying()
+
+
+class Clipboard:
+    @staticmethod
+    def get():
+        if os.environ.get("WAYLAND_DISPLAY") and which("wl-paste"):
+            out = run(["wl-paste", "--no-newline", "--type", "text"])
+        elif which("xclip"):
+            out = run(["xclip", "-selection", "clipboard", "-o"])
+        elif which("xsel"):
+            out = run(["xsel", "--clipboard", "--output"])
+        else:
+            out = None
+        return "Y " + base64.b64encode((out or "").encode()).decode()
+
+    @staticmethod
+    def set(b64):
+        try:
+            text = base64.b64decode(b64).decode("utf-8", "replace")
+        except ValueError:
+            return
+        if os.environ.get("WAYLAND_DISPLAY") and which("wl-copy"):
+            args = ["wl-copy"]
+        elif which("xclip"):
+            args = ["xclip", "-selection", "clipboard"]
+        elif which("xsel"):
+            args = ["xsel", "--clipboard", "--input"]
+        else:
+            return log("⚠️  área de transferência: instale wl-clipboard (Wayland) ou xclip (X11)")
+        try:  # wl-copy/xclip ficam vivos servindo o conteúdo: não espera
+            p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            p.stdin.write(text.encode())
+            p.stdin.close()
+            threading.Thread(target=p.wait, daemon=True).start()
+            log("📋 área de transferência recebida do iPhone")
+        except OSError as e:
+            log("✗ área de transferência: %s" % e)
+
+
+def downloads_dir():
+    d = (run(["xdg-user-dir", "DOWNLOAD"]) or "").strip()
+    if not d or d == os.path.expanduser("~"):
+        d = os.path.expanduser("~/Downloads")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def safe_name(name):
+    n = re.sub(r"[/\\\x00]", "_", name).strip()
+    return n if n and not n.startswith(".") else "arquivo" + n
+
+
+def unique_path(d, name):
+    base, ext = os.path.splitext(name)
+    path, i = os.path.join(d, name), 1
+    while os.path.exists(path):
+        path = os.path.join(d, "%s (%d)%s" % (base, i, ext))
+        i += 1
+    return path
+
+
+class Files:
+    """"F nome", "D base64"…, "E" → "E ok caminho" | "E erro mensagem" (um arquivo por conexão)."""
+
+    def __init__(self):
+        self.open = {}
+
+    def begin(self, name, owner):
+        self.cancel(owner)
+        path = unique_path(downloads_dir(), safe_name(name))
+        try:
+            self.open[owner] = (open(path, "wb"), path)
+        except OSError as e:
+            log("✗ arquivo: %s" % e)
+
+    def data(self, b64, owner):
+        f = self.open.get(owner)
+        if f:
+            try:
+                f[0].write(base64.b64decode(b64))
+            except (ValueError, OSError):
+                pass
+
+    def end(self, owner, reply):
+        f = self.open.pop(owner, None)
+        if not f:
+            return reply("E erro transferência não iniciada")
+        f[0].close()
+        log("📥 arquivo recebido: %s" % f[1])
+        reply("E ok " + f[1])
+
+    def cancel(self, owner):
+        """Conexão caiu no meio: apaga o arquivo pela metade."""
+        f = self.open.pop(owner, None)
+        if f:
+            f[0].close()
+            try:
+                os.remove(f[1])
+            except OSError:
+                pass
+
+
+files = Files()
+
+
+class WakeOnLAN:
+    @staticmethod
+    def line():
+        """MAC e broadcast da interface da rota padrão: "K mac broadcast"."""
+        iface = None
+        try:
+            with open("/proc/net/route") as fh:
+                for row in fh.read().splitlines()[1:]:
+                    f = row.split()
+                    if len(f) > 2 and f[1] == "00000000":
+                        iface = f[0]
+                        break
+        except OSError:
+            pass
+        if not iface:
+            return None
+        try:
+            with open("/sys/class/net/%s/address" % iface) as fh:
+                mac = fh.read().strip()
+        except OSError:
+            return None
+        m = re.search(r"brd (\d+\.\d+\.\d+\.\d+)", run(["ip", "-4", "-o", "addr", "show", "dev", iface]) or "")
+        return "K %s %s" % (mac, m.group(1) if m else "255.255.255.255")
+
+    @staticmethod
+    def wake(mac, bcast=""):
+        h = re.sub(r"[^0-9a-fA-F]", "", mac)
+        if len(h) != 12:
+            return
+        packet = b"\xff" * 6 + bytes.fromhex(h) * 16
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in {bcast or "255.255.255.255", "255.255.255.255"}:
+            try:
+                s.sendto(packet, (target, 9))
+            except OSError as e:
+                log("✗ Wake-on-LAN: %s" % e)
+        s.close()
+        log("⏰ Wake-on-LAN para %s" % mac)
+
+
 # MARK: - Assinatura de dados contínuos (um cliente por vez — o último que pediu)
 
 
@@ -921,13 +1139,15 @@ class Hub:
         if self.task:
             self.task.cancel()
             self.task = None
-        if kind not in ("s", "a"):
+        now_playing.reset()
+        if kind not in ("s", "a", "n"):
             self.sub = None
             return
         self.sub = (kind, owner, reply)
         self.task = asyncio.ensure_future(self._loop())
 
     def drop(self, owner):
+        files.cancel(owner)
         if self.sub and self.sub[1] == owner:
             self.subscribe("0", owner, None)
 
@@ -939,6 +1159,8 @@ class Hub:
                 for s in (stats.line(), stats.processes()):
                     if s:
                         reply(s)
+            elif kind == "n":
+                await now_playing.push(reply)
             elif self.tick % 2 == 1:
                 reply(apps.list())  # sem notificações de janela no Linux: consulta a cada 2 s
             await asyncio.sleep(1)
@@ -966,6 +1188,14 @@ def _handle(msg, owner, reply):
         return actions.run(rest)
     if op == "O":
         return actions.open(rest)
+    if op == "F":
+        return files.begin(rest, owner)
+    if op == "D":
+        return files.data(rest, owner)
+    if op == "E":
+        return files.end(owner, reply)
+    if op == "Y":
+        return Clipboard.set(rest)
     if op == "f":  # o título pode ter espaços
         p = msg.split(" ", 3)
         if len(p) >= 3:
@@ -1037,6 +1267,12 @@ def _handle(msg, owner, reply):
         reply(actions.list())
     elif op == "g":
         actions.gesture(s(1))
+    elif op == "y":
+        reply(Clipboard.get())
+    elif op == "K":
+        r(WakeOnLAN.line())
+    elif op == "R":
+        WakeOnLAN.wake(s(1), s(2))
 
 
 def disconnected(owner):

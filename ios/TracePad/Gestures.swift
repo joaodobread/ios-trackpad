@@ -18,8 +18,15 @@ struct GestureSlot: Identifiable {
     let standard: String?
     let standardTitle: String
     var linuxTitle: String? = nil
+    var windowsTitle: String? = nil
 
-    func title(_ os: String) -> String { os == "linux" ? linuxTitle ?? standardTitle : standardTitle }
+    func title(_ os: String) -> String {
+        switch os {
+        case "linux": linuxTitle ?? standardTitle
+        case "windows": windowsTitle ?? linuxTitle ?? standardTitle
+        default: standardTitle
+        }
+    }
 }
 
 final class GestureStore: ObservableObject {
@@ -27,24 +34,24 @@ final class GestureStore: ObservableObject {
     private let key = "gestures.v2"
 
     static let slots: [GestureSlot] = [
-        .init(id: "3.up", title: "3 dedos ↑", icon: "arrow.up", standard: "mission", standardTitle: "Mission Control", linuxTitle: "Visão geral (Super)"),
-        .init(id: "3.down", title: "3 dedos ↓", icon: "arrow.down", standard: "expose", standardTitle: "App Exposé", linuxTitle: "Visão geral (Super)"),
-        .init(id: "3.left", title: "3 dedos ←", icon: "arrow.left", standard: "space-right", standardTitle: "Mesa à direita", linuxTitle: "Mesa à direita (Ctrl+Alt+→)"),
-        .init(id: "3.right", title: "3 dedos →", icon: "arrow.right", standard: "space-left", standardTitle: "Mesa à esquerda", linuxTitle: "Mesa à esquerda (Ctrl+Alt+←)"),
+        .init(id: "3.up", title: "3 dedos ↑", icon: "arrow.up", standard: "mission", standardTitle: "Mission Control", linuxTitle: "Visão geral (Super)", windowsTitle: "Visão de tarefas (Win+Tab)"),
+        .init(id: "3.down", title: "3 dedos ↓", icon: "arrow.down", standard: "expose", standardTitle: "App Exposé", linuxTitle: "Visão geral (Super)", windowsTitle: "Visão de tarefas (Win+Tab)"),
+        .init(id: "3.left", title: "3 dedos ←", icon: "arrow.left", standard: "space-right", standardTitle: "Mesa à direita", linuxTitle: "Mesa à direita (Ctrl+Alt+→)", windowsTitle: "Área à direita (Ctrl+Win+→)"),
+        .init(id: "3.right", title: "3 dedos →", icon: "arrow.right", standard: "space-left", standardTitle: "Mesa à esquerda", linuxTitle: "Mesa à esquerda (Ctrl+Alt+←)", windowsTitle: "Área à esquerda (Ctrl+Win+←)"),
         .init(id: "3.tap", title: "Toque com 3 dedos", icon: "hand.tap", standard: "lookup", standardTitle: "Consultar", linuxTitle: "Nada"),
-        .init(id: "4.up", title: "4 dedos ↑", icon: "arrow.up", standard: "mission", standardTitle: "Mission Control", linuxTitle: "Visão geral (Super)"),
-        .init(id: "4.down", title: "4 dedos ↓", icon: "arrow.down", standard: "desktop", standardTitle: "Mostrar mesa", linuxTitle: "Mostrar mesa (Super+D)"),
-        .init(id: "4.left", title: "4 dedos ←", icon: "arrow.left", standard: "space-right", standardTitle: "Mesa à direita", linuxTitle: "Mesa à direita (Ctrl+Alt+→)"),
-        .init(id: "4.right", title: "4 dedos →", icon: "arrow.right", standard: "space-left", standardTitle: "Mesa à esquerda", linuxTitle: "Mesa à esquerda (Ctrl+Alt+←)"),
+        .init(id: "4.up", title: "4 dedos ↑", icon: "arrow.up", standard: "mission", standardTitle: "Mission Control", linuxTitle: "Visão geral (Super)", windowsTitle: "Visão de tarefas (Win+Tab)"),
+        .init(id: "4.down", title: "4 dedos ↓", icon: "arrow.down", standard: "desktop", standardTitle: "Mostrar mesa", linuxTitle: "Mostrar mesa (Super+D)", windowsTitle: "Mostrar área de trabalho (Win+D)"),
+        .init(id: "4.left", title: "4 dedos ←", icon: "arrow.left", standard: "space-right", standardTitle: "Mesa à direita", linuxTitle: "Mesa à direita (Ctrl+Alt+→)", windowsTitle: "Área à direita (Ctrl+Win+→)"),
+        .init(id: "4.right", title: "4 dedos →", icon: "arrow.right", standard: "space-left", standardTitle: "Mesa à esquerda", linuxTitle: "Mesa à esquerda (Ctrl+Alt+←)", windowsTitle: "Área à esquerda (Ctrl+Win+←)"),
         .init(id: "4.tap", title: "Toque com 4 dedos", icon: "hand.tap", standard: nil, standardTitle: "Nada"),
         .init(id: "pinch.open", title: "Pinça abrir", icon: "arrow.up.left.and.arrow.down.right", standard: "zoom-in", standardTitle: "Aumentar zoom", linuxTitle: "Aumentar zoom (Ctrl+=)"),
         .init(id: "pinch.close", title: "Pinça fechar", icon: "arrow.down.right.and.arrow.up.left", standard: "zoom-out", standardTitle: "Diminuir zoom", linuxTitle: "Diminuir zoom (Ctrl+−)"),
     ]
 
-    static let systems = [("mac", "Mac"), ("linux", "Linux")]
+    static let systems = [("mac", "Mac"), ("linux", "Linux"), ("windows", "Windows")]
 
     /// Sistema do computador ativo (sem anúncio = Mac, como os hosts antigos).
-    static var currentOS: String { Link.shared.hostOS == "linux" ? "linux" : "mac" }
+    static var currentOS: String { ["linux", "windows"].contains(Link.shared.hostOS) ? Link.shared.hostOS! : "mac" }
 
     /// sistema → gesto → configuração
     @Published var bindings: [String: [String: GestureBinding]] {
@@ -56,7 +63,7 @@ final class GestureStore: ObservableObject {
         if let v2 = d.data(forKey: key).flatMap({ try? JSONDecoder().decode([String: [String: GestureBinding]].self, from: $0) }) {
             bindings = v2
         } else if let v1 = d.data(forKey: "gestures").flatMap({ try? JSONDecoder().decode([String: GestureBinding].self, from: $0) }) {
-            bindings = ["mac": v1, "linux": v1] // antes de separar por sistema
+            bindings = ["mac": v1, "linux": v1, "windows": v1] // antes de separar por sistema
         } else {
             bindings = [:]
         }
@@ -126,10 +133,10 @@ struct GesturesView: View {
                     }
                 }
             } footer: {
-                Text("Padrão: o computador decide. No Mac são os atalhos do sistema; no Linux, a visão geral (Super), Ctrl+Alt+←/→ e Super+D — redefinidos no computador em ~/.tracepad-actions com linhas como “@mission = super+w” ou “@space-left = wmctrl -s 0”.")
+                Text("Padrão: o computador decide. No Mac são os atalhos do sistema; no Windows, Win+Tab, Ctrl+Win+←/→ e Win+D; no Linux, a visão geral (Super), Ctrl+Alt+←/→ e Super+D. No Linux e no Windows dá para redefinir no computador em ~/.tracepad-actions com linhas como “@mission = super+w” ou “@space-left = wmctrl -s 0”.")
             }
             if !(store.bindings[os] ?? [:]).isEmpty {
-                Section { Button("Restaurar padrões do \(os == "linux" ? "Linux" : "Mac")", role: .destructive) { store.bindings[os] = nil } }
+                Section { Button("Restaurar padrões do \(osName(os) ?? "Mac")", role: .destructive) { store.bindings[os] = nil } }
             }
         }
         .navigationTitle("Gestos")
@@ -166,7 +173,7 @@ private struct GestureEditor: View {
                 ActionFields(action: b.action)
             }
         }
-        .navigationTitle("\(slot.title) · \(os == "linux" ? "Linux" : "Mac")")
+        .navigationTitle("\(slot.title) · \(osName(os) ?? "Mac")")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

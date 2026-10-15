@@ -157,6 +157,7 @@ final class Hub {
     static let shared = Hub()
     let stats = StatsSampler()
     let apps = AppsWatcher()
+    let nowPlaying = NowPlaying()
     private var sub: (kind: Character, owner: String, reply: (String) -> Void)?
     private var timer: Timer?
     private var tick = 0
@@ -168,17 +169,19 @@ final class Hub {
         }
     }
 
-    /// kind: "s" monitor, "a" apps, "0" nada
+    /// kind: "s" monitor, "a" apps, "n" tocando agora, "0" nada
     func subscribe(_ kind: Character, owner: String, reply: @escaping (String) -> Void) {
         timer?.invalidate()
         timer = nil
-        guard kind == "s" || kind == "a" else { sub = nil; return }
+        nowPlaying.reset()
+        guard kind == "s" || kind == "a" || kind == "n" else { sub = nil; return }
         sub = (kind, owner, reply)
         push()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.push() }
     }
 
     func drop(owner: String) {
+        FileReceiver.shared.cancel(owner: owner)
         guard sub?.owner == owner else { return }
         sub = nil
         timer?.invalidate()
@@ -191,6 +194,8 @@ final class Hub {
         if s.kind == "s" {
             s.reply(stats.line())
             s.reply(stats.processes())
+        } else if s.kind == "n" {
+            nowPlaying.push(s.reply)
         } else if tick % 3 == 0 {
             s.reply(apps.list()) // as notificações cobrem quase tudo; isto é só uma rede de segurança
         }

@@ -81,7 +81,7 @@ jobs:
         run: |
           pacman -Sy --noconfirm
           pacman -S --noconfirm --needed python python-evdev python-psutil python-bleak usbmuxd libimobiledevice \
-            libpulse brightnessctl wtype wl-clipboard wmctrl xdotool
+            libpulse brightnessctl wtype wl-clipboard playerctl xclip wmctrl xdotool
 
       - name: Host do Linux
         run: |
@@ -90,9 +90,43 @@ jobs:
           python3 -c "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8787/').status == 200"
           cat log.txt
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependências
+        run: python -m pip install -r windows/requirements.txt
+
+      - name: Host do Windows (compila e sobe o servidor)
+        run: |
+          python -m py_compile windows/tracepad.py
+          $p = Start-Process python -ArgumentList "windows/tracepad.py", "web" -PassThru -NoNewWindow `
+            -RedirectStandardOutput log.txt -RedirectStandardError err.txt
+          Start-Sleep -Seconds 6
+          Get-Content log.txt, err.txt
+          $html = curl.exe -sf http://127.0.0.1:8787/
+          if ($LASTEXITCODE -ne 0 -or -not ($html -match "TracePad")) { throw "PWA não respondeu" }
+          if (-not (Select-String -Path log.txt -Pattern "TracePad rodando" -Quiet)) { throw "host não subiu" }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Pacote
+        run: |
+          Remove-Item -Recurse -Force windows/__pycache__ -ErrorAction SilentlyContinue
+          Compress-Archive -Path windows, web, README.md, LICENSE -DestinationPath TracePad-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TracePad-windows
+          path: TracePad-windows.zip
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [mac, linux]
+    needs: [mac, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -100,9 +134,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: PKGBUILD e cask com sha256
+        run: |
+          MAC_ZIP=$PWD/TracePad-mac.zip sh src/packaging/bump.sh "${GITHUB_REF_NAME#v}"
+          cp src/packaging/arch/PKGBUILD PKGBUILD
+          cp src/packaging/homebrew/tracepad.rb tracepad.rb
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             TracePad-mac.zip
             TracePad-ios-unsigned.ipa
             TracePad-linux.tar.gz
+            TracePad-windows.zip
+            PKGBUILD
+            tracepad.rb

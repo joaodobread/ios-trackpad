@@ -1,0 +1,10 @@
+# TracePad para Windows — tudo opcional: sem nada, mouse/teclado/apps/área de transferência já funcionam (ctypes).
+psutil                          # modo Monitor e Wake-on-LAN
+bleak                           # Bluetooth (WinRT)
+pycaw; sys_platform == "win32"  # volume
+wmi; sys_platform == "win32"    # brilho (sem ele, PowerShell)
+Pillow                          # capa do "tocando agora" reduzida (mais rápida no Bluetooth)
+winrt-runtime; sys_platform == "win32"                 # tocando agora (GlobalSystemMediaTransportControls)
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Media.Control; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"

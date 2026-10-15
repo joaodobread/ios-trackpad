@@ -26,7 +26,7 @@ struct CustomAction: Codable, Identifiable, Equatable {
     var value: String
     /// modificadores do atalho: c=⌘ a=⌥ t=⌃ s=⇧ w=Super (no Mac, igual a ⌘)
     var mods = ""
-    /// "mac", "linux" ou nil (todos): a grade mostra só as do computador conectado
+    /// "mac", "linux", "windows" ou nil (todos): a grade mostra só as do computador conectado
     var os: String? = nil
 
     /// Linha do protocolo enviada ao computador.
@@ -205,6 +205,7 @@ private struct ActionEditor: View {
                         Text("Todos").tag(String?.none)
                         Text("Só Mac").tag(String?.some("mac"))
                         Text("Só Linux").tag(String?.some("linux"))
+                        Text("Só Windows").tag(String?.some("windows"))
                     }
                     ScrollView(.horizontal) {
                         HStack(spacing: 10) {

@@ -17,7 +17,7 @@ final class Settings: ObservableObject {
     @Published var skin: String { didSet { d.set(skin, forKey: "skin") } }
     @Published var customURL: String { didSet { d.set(customURL, forKey: "customURL") } }
     @Published var dim: Double { didSet { d.set(dim, forKey: "dim") } }
-    /// "trackpad", "monitor", "apps" ou "actions"
+    /// "trackpad", "monitor", "apps", "actions", "media" ou "present"
     @Published var mode: String { didSet { d.set(mode, forKey: "mode") } }
     /// muda quando a foto da skin é trocada, para recarregar a mídia
     @Published var skinVersion = 0

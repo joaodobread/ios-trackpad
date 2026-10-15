@@ -37,7 +37,37 @@ struct Peer: Identifiable {
     let id: UUID
     var os: String?
     var name: String?
-    var label: String { name ?? (os == "linux" ? "Linux" : os == "mac" ? "Mac" : "Computador") }
+    var label: String { name ?? osName(os) ?? "Computador" }
+}
+
+/// Nome do sistema anunciado pelo host ("H so nome").
+func osName(_ os: String?) -> String? {
+    switch os {
+    case "mac": "Mac"
+    case "linux": "Linux"
+    case "windows": "Windows"
+    default: nil
+    }
+}
+
+/// "N …": o que está tocando no computador. A posição avança sozinha a partir de `at`.
+struct NowPlayingInfo: Equatable {
+    var playing: Bool
+    var duration: Double?, position: Double?
+    var title: String, artist: String, album: String, app: String
+    var at: Date
+
+    func elapsed(_ now: Date) -> Double? {
+        guard let position else { return nil }
+        let p = position + (playing ? now.timeIntervalSince(at) : 0)
+        return duration.map { min(p, $0) } ?? p
+    }
+}
+
+/// Computador conhecido, para acordar pela rede (Wake-on-LAN) a partir de outro que esteja ligado.
+struct KnownHost: Codable, Identifiable, Equatable {
+    var id: String { mac }
+    var mac: String, broadcast: String, name: String, os: String?
 }
 
 struct MacWindow: Identifiable {
@@ -78,6 +108,18 @@ final class Link: NSObject, ObservableObject {
     @Published private(set) var hostName: String?
     /// central do Bluetooth que recebe os comandos (nil fora do Bluetooth)
     @Published private(set) var activePeer: UUID?
+    @Published private(set) var nowPlaying: NowPlayingInfo?
+    @Published private(set) var artwork: UIImage?
+    /// progresso do envio de arquivo (nil = nenhum)
+    @Published private(set) var transferProgress: Double?
+    /// aviso rápido no topo da tela (área de transferência, arquivo salvo…)
+    @Published private(set) var notice: String?
+    @Published private(set) var knownHosts: [KnownHost] = UserDefaults.standard.data(forKey: "hosts")
+        .flatMap { try? JSONDecoder().decode([KnownHost].self, from: $0) } ?? [] {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(knownHosts), forKey: "hosts") }
+    }
+    private var noticeTimer: Timer?
+    private var transfer: (data: Data, offset: Int, name: String)?
     private var peerInfo = [UUID: (os: String, name: String)]()
     private var usbHost: (os: String, name: String)?
     /// computador escolhido para o Bluetooth (lembrado entre aberturas)
@@ -100,10 +142,13 @@ final class Link: NSObject, ObservableObject {
     private enum Cmd {
         case move(Double, Double)
         case line(String)
-        var text: String {
+        /// resto de uma linha longa que não coube no pacote anterior (já com o "\n")
+        case raw(Data)
+        var data: Data {
             switch self {
-            case .move(let x, let y): String(format: "m %.2f %.2f", x, y)
-            case .line(let s): s
+            case .move(let x, let y): Data(String(format: "m %.2f %.2f\n", x, y).utf8)
+            case .line(let s): Data((s + "\n").utf8)
+            case .raw(let d): d
             }
         }
     }
@@ -142,7 +187,7 @@ final class Link: NSObject, ObservableObject {
 
     private func emit(_ c: Cmd) {
         if let usb, usb.state == .ready {
-            usb.send(content: Data((c.text + "\n").utf8), completion: .idempotent)
+            usb.send(content: c.data, completion: .idempotent)
             return
         }
         guard characteristic != nil, activeCentral != nil else { return }
@@ -161,18 +206,108 @@ final class Link: NSObject, ObservableObject {
     private func pump() {
         guard let ch = characteristic, let central = activeCentral else { return }
         let maxLen = central.maximumUpdateValueLength
-        while !queue.isEmpty {
-            var packet = ""
+        while true {
+            if queue.isEmpty, !feedBLE(maxLen) { return } // fila vazia: vez do arquivo sendo enviado
+            var packet = Data()
             var n = 0
+            var rest: Data?
             for c in queue {
-                let t = c.text + "\n"
-                if n > 0, packet.utf8.count + t.utf8.count > maxLen { break }
-                packet += t
+                let d = c.data
+                if packet.count + d.count > maxLen {
+                    if n == 0 { // linha maior que o pacote: vai em pedaços (o computador junta até o "\n")
+                        var cut = maxLen
+                        while cut > 1, d[d.startIndex + cut] & 0xC0 == 0x80 { cut -= 1 } // não parte um caractere UTF-8
+                        packet = d.prefix(cut)
+                        rest = d.dropFirst(cut)
+                    }
+                    break
+                }
+                packet += d
                 n += 1
             }
-            guard pm.updateValue(Data(packet.utf8), for: ch, onSubscribedCentrals: [central]) else { return }
-            queue.removeFirst(n)
+            guard pm.updateValue(packet, for: ch, onSubscribedCentrals: [central]) else { return }
+            if let rest { queue[0] = .raw(Data(rest)) } else { queue.removeFirst(n) }
         }
+    }
+
+    // MARK: arquivos, área de transferência, Wake-on-LAN
+
+    /// Manda um arquivo para a pasta Downloads do computador ("F nome", "D base64"…, "E").
+    func sendFile(name: String, data: Data) {
+        guard transport != .none else { return show("Sem conexão com o computador") }
+        guard transfer == nil else { return show("Já tem um envio em andamento") }
+        transfer = (data, 0, name)
+        transferProgress = 0
+        send("F " + name.replacingOccurrences(of: "\n", with: " "))
+        if transport == .usb { feedUSB() } else { pump() }
+    }
+
+    func cancelTransfer() {
+        guard transfer != nil else { return }
+        transfer = nil
+        transferProgress = nil
+        send("E") // o computador fecha o arquivo; o "E ok" que volta é ignorado
+        show("Envio cancelado")
+    }
+
+    private func nextChunk(_ size: Int) -> String? {
+        guard var t = transfer else { return nil }
+        guard t.offset < t.data.count else {
+            transfer = nil
+            transferProgress = 1
+            return "E"
+        }
+        let end = min(t.offset + size, t.data.count)
+        let line = "D " + t.data.subdata(in: t.offset..<end).base64EncodedString()
+        t.offset = end
+        transfer = t
+        let p = Double(end) / Double(t.data.count)
+        if p - (transferProgress ?? 0) >= 0.01 || end == t.data.count { transferProgress = p }
+        return line
+    }
+
+    /// USB: um pedaço grande por vez, o próximo quando o anterior saiu.
+    private func feedUSB() {
+        guard let usb, usb.state == .ready, let line = nextChunk(48 * 1024) else { return }
+        usb.send(content: Data((line + "\n").utf8), completion: .contentProcessed { [weak self] err in
+            DispatchQueue.main.async { if err == nil { self?.feedUSB() } }
+        })
+    }
+
+    /// Bluetooth: só quando a fila de gestos está vazia, em linhas do tamanho de um pacote.
+    private func feedBLE(_ maxLen: Int) -> Bool {
+        guard transfer != nil else { return false }
+        for _ in 0..<8 {
+            guard let line = nextChunk(max(30, (maxLen - 3) / 4 * 3)) else { break }
+            queue.append(.line(line))
+        }
+        return !queue.isEmpty
+    }
+
+    /// Pega o texto copiado no computador e coloca na área de transferência do iPhone.
+    func pullClipboard() { send("y") }
+
+    /// Manda o texto copiado no iPhone para a área de transferência do computador.
+    func pushClipboard() {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else { return show("Nada copiado no iPhone") }
+        send("Y " + Data(text.utf8).base64EncodedString())
+        show("Enviado para o computador")
+    }
+
+    /// Acorda outro computador: o pacote mágico sai do computador conectado (o iOS não deixa apps
+    /// gratuitos mandarem broadcast na rede).
+    func wake(_ h: KnownHost) {
+        guard transport != .none else { return show("Conecte a um computador ligado para acordar os outros") }
+        send("R \(h.mac) \(h.broadcast)")
+        show("Acordando \(h.name)…")
+    }
+
+    func forget(_ h: KnownHost) { knownHosts.removeAll { $0 == h } }
+
+    func show(_ text: String) {
+        notice = text
+        noticeTimer?.invalidate()
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in self?.notice = nil }
     }
 
     func subscribe(_ kind: Character) {
@@ -215,11 +350,13 @@ final class Link: NSObject, ObservableObject {
             if let old = activeKey, let c = subscribers.first(where: { $0.identifier.uuidString == old }) { direct("u\nw 0\n", to: c) }
             activeKey = key
             resetHostData()
+            if transfer != nil { transfer = nil; transferProgress = nil; show("Envio interrompido") }
             if key != nil {
                 DispatchQueue.main.async {
                     self.send("?") // pede "H so nome" (hosts antigos ignoram)
                     if self.subscription != "0" { self.send("w \(self.subscription)") }
                     self.send("C")
+                    self.send("K") // MAC deste computador, para acordá-lo depois
                 }
             }
         }
@@ -237,6 +374,8 @@ final class Link: NSObject, ObservableObject {
         installedIcons = [:]
         windows = nil
         commands = []
+        nowPlaying = nil
+        artwork = nil
         iconRequested.removeAll()
         installedRequested.removeAll()
     }
@@ -305,6 +444,11 @@ final class Link: NSObject, ObservableObject {
             case "L": parseInstalled(body)
             case "J": parseInstalledIcon(body)
             case "C": commands = body.split(separator: "\t").map(String.init)
+            case "N": parseNowPlaying(body)
+            case "M": artwork = Data(base64Encoded: String(body)).flatMap(UIImage.init(data:))
+            case "Y": receiveClipboard(body)
+            case "E": transferDone(body)
+            case "K": rememberHost(body)
             default: break
             }
         }
@@ -317,6 +461,45 @@ final class Link: NSObject, ObservableObject {
         let info = (os: String(os), name: a.count > 1 ? String(a[1]) : "")
         if src == "usb" { usbHost = info } else if let id = UUID(uuidString: src) { peerInfo[id] = info }
         update()
+    }
+
+    private func parseNowPlaying(_ body: Substring) {
+        let f = body.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 7, f[0] != "stopped" else { nowPlaying = nil; return }
+        let num = { (s: String) in Double(s).flatMap { $0 >= 0 ? $0 : nil } }
+        nowPlaying = NowPlayingInfo(playing: f[0] == "playing", duration: num(f[1]), position: num(f[2]),
+                                    title: f[3], artist: f[4], album: f[5], app: f[6], at: Date())
+    }
+
+    private func receiveClipboard(_ body: Substring) {
+        guard let d = Data(base64Encoded: String(body)) else { return }
+        let text = String(decoding: d, as: UTF8.self)
+        guard !text.isEmpty else { return show("Nada copiado no computador") }
+        UIPasteboard.general.string = text
+        show("Copiado do computador")
+    }
+
+    private func transferDone(_ body: Substring) {
+        guard transferProgress != nil else { return }
+        transferProgress = nil
+        if body.hasPrefix("ok ") {
+            show("Salvo em " + ((String(body.dropFirst(3)) as NSString).deletingLastPathComponent as NSString).lastPathComponent)
+        } else {
+            show("Erro: " + body.dropFirst(5))
+        }
+    }
+
+    /// "K mac broadcast": guarda (ou atualiza) este computador na lista do Wake-on-LAN.
+    private func rememberHost(_ body: Substring) {
+        let a = body.split(separator: " ")
+        guard a.count >= 1 else { return }
+        let h = KnownHost(mac: String(a[0]), broadcast: a.count > 1 ? String(a[1]) : "255.255.255.255",
+                          name: hostName.flatMap { $0.isEmpty ? nil : $0 } ?? osName(hostOS) ?? "Computador", os: hostOS)
+        if let i = knownHosts.firstIndex(where: { $0.mac == h.mac }) {
+            if knownHosts[i] != h { knownHosts[i] = h }
+        } else {
+            knownHosts.append(h)
+        }
     }
 
     private func parseState(_ body: Substring) {
@@ -458,7 +641,7 @@ extension Link {
         transport = .usb
         activeKey = "usb"
         let u = "\u{1f}"
-        received(Data(("S 0.58 0.5 0\n" +
+        received(Data(("S 0.58 0.5 0\n" + "N playing\t215.0\t42\tGangsta Gangsta\tN.W.A.\tStraight Outta Compton\tSpotify\n" +
             "A 1\(u)1\(u)0\(u)Safari\(u)a\(u)1\t2\(u)0\(u)0\(u)Xcode\(u)b\(u)3\t3\(u)0\(u)0\(u)Finder\(u)c\t4\(u)0\(u)1\(u)Spotify\(u)d\t5\(u)0\(u)0\(u)Slack\(u)e\t6\(u)0\(u)0\(u)Terminal\(u)f\n").utf8))
         var t = 0.0
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in

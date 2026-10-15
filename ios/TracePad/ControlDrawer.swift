@@ -1,12 +1,16 @@
-// Painel lateral (aberto pelo botão no topo): brilho, volume, mudo e mídia do Mac.
+// Painel lateral (aberto pelo botão no topo): brilho, volume, mudo, mídia, área de transferência e arquivos.
 
 import SwiftUI
 import UIKit
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct ControlDrawer: View {
     @ObservedObject private var link = Link.shared
     @Binding var open: Bool
     @State private var drag: CGFloat = 0
+    @State private var photos = [PhotosPickerItem]()
+    @State private var importing = false
     private let width: CGFloat = 250
 
     var body: some View {
@@ -42,6 +46,8 @@ struct ControlDrawer: View {
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: open)
         .onChange(of: open) { _, v in if v { link.send("q") } }
+        .onChange(of: photos) { _, items in sendPhotos(items) }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { sendFile($0) }
         .animation(.interactiveSpring, value: drag)
     }
 
@@ -67,10 +73,18 @@ struct ControlDrawer: View {
                 round("playpause.fill") { link.send("x 16") }
                 round("forward.fill") { link.send("x 17") }
             }
+            HStack(alignment: .top, spacing: 10) {
+                labeled("doc.on.clipboard", "Copiar do PC") { link.pullClipboard() }
+                labeled("arrow.up.doc.on.clipboard", "Colar no PC") { link.pushClipboard() }
+                PhotosPicker(selection: $photos, maxSelectionCount: 10) {
+                    caption(icon("photo.on.rectangle"), "Fotos")
+                }
+                labeled("folder", "Arquivo") { importing = true }
+            }
         }
         .padding(16)
         .frame(width: width)
-        .frame(maxHeight: 340)
+        .frame(maxHeight: 430)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .padding(.vertical, 12)
         .padding(.trailing, 10)
@@ -81,12 +95,58 @@ struct ControlDrawer: View {
             action()
             if Settings.shared.haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 46, height: 46)
-                .background(active ? Color.white : Color.white.opacity(0.14), in: Circle())
-                .foregroundStyle(active ? Color.black : .white)
+            icon(symbol, active: active)
         }
+    }
+
+    private func icon(_ symbol: String, active: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(width: 46, height: 46)
+            .background(active ? Color.white : Color.white.opacity(0.14), in: Circle())
+            .foregroundStyle(active ? Color.black : .white)
+    }
+
+    private func caption(_ v: some View, _ text: String) -> some View {
+        VStack(spacing: 4) {
+            v
+            Text(text).font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
+                .multilineTextAlignment(.center).frame(width: 50)
+        }
+    }
+
+    private func labeled(_ symbol: String, _ text: String, _ action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            if Settings.shared.haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        } label: {
+            caption(icon(symbol), text)
+        }
+    }
+
+    /// Fotos e vídeos vão um depois do outro (o envio seguinte começa quando o anterior termina).
+    private func sendPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        photos = []
+        setOpen(false)
+        Task { @MainActor in
+            for (i, item) in items.enumerated() {
+                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)).replacingOccurrences(of: ":", with: "-")
+                while link.transferProgress != nil { try? await Task.sleep(for: .milliseconds(200)) }
+                link.sendFile(name: "iPhone \(stamp)\(items.count > 1 ? "-\(i + 1)" : "").\(ext)", data: data)
+            }
+        }
+    }
+
+    private func sendFile(_ result: Result<URL, Error>) {
+        guard case .success(let url) = result else { return }
+        let ok = url.startAccessingSecurityScopedResource()
+        defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { return link.show("Não consegui ler o arquivo") }
+        setOpen(false)
+        link.sendFile(name: url.lastPathComponent, data: data)
     }
 }
 

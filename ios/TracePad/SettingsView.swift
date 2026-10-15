@@ -2,6 +2,11 @@ import SwiftUI
 import PhotosUI
 
 struct SettingsView: View {
+    static let modes = [
+        ("trackpad", "Trackpad", "hand.point.up.left"), ("monitor", "Monitor", "gauge.with.dots.needle.67percent"),
+        ("apps", "Apps", "square.grid.2x2"), ("actions", "Ações", "bolt"),
+        ("media", "Tocando", "music.note"), ("present", "Apresentação", "play.rectangle"),
+    ]
     @ObservedObject var s = Settings.shared
     @ObservedObject var link = Link.shared
     @Environment(\.dismiss) private var dismiss
@@ -13,24 +18,31 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Modo") {
-                    Picker("Modo", selection: $s.mode) {
-                        Label("Trackpad", systemImage: "hand.point.up.left").tag("trackpad")
-                        Label("Monitor", systemImage: "gauge.with.dots.needle.67percent").tag("monitor")
-                        Label("Apps", systemImage: "square.grid.2x2").tag("apps")
-                        Label("Ações", systemImage: "bolt").tag("actions")
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        ForEach(SettingsView.modes, id: \.0) { m in
+                            Button { s.mode = m.0 } label: {
+                                VStack(spacing: 5) {
+                                    Image(systemName: m.2).font(.system(size: 18, weight: .medium))
+                                    Text(m.1).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                                }
+                                .frame(maxWidth: .infinity).frame(height: 56)
+                                .background(s.mode == m.0 ? Color.accentColor : Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .foregroundStyle(s.mode == m.0 ? Color.white : .primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    .padding(.vertical, 4)
                 }
 
                 Section("Conexão") {
                     LabeledContent("Status", value: link.transport.rawValue)
                     if link.transport != .none {
-                        LabeledContent("Computador", value: [link.hostOS == "linux" ? "Linux" : "Mac", link.hostName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        LabeledContent("Computador", value: [osName(link.hostOS) ?? "Mac", link.hostName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     }
                     if link.peers.count > 1 {
                         Picker("Bluetooth", selection: Binding(get: { link.activePeer ?? link.peers[0].id }, set: { link.select($0) })) {
-                            ForEach(link.peers) { p in Text(p.label + (p.os == "linux" ? " (Linux)" : p.os == "mac" ? " (Mac)" : "")).tag(p.id) }
+                            ForEach(link.peers) { p in Text(p.label + (osName(p.os).map { " (\($0))" } ?? "")).tag(p.id) }
                         }
                         .disabled(link.transport == .usb)
                     }
@@ -54,6 +66,31 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink { GesturesView() } label: { Label("Gestos", systemImage: "hand.draw") }
+                }
+
+                Section {
+                    if link.knownHosts.isEmpty {
+                        Text("Os computadores aparecem aqui depois da primeira conexão.").foregroundStyle(.secondary)
+                    }
+                    ForEach(link.knownHosts) { h in
+                        HStack {
+                            Label {
+                                VStack(alignment: .leading) {
+                                    Text(h.name)
+                                    Text(h.mac).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
+                            } icon: { Image(systemName: h.os == "mac" ? "laptopcomputer" : "pc") }
+                            Spacer()
+                            Button("Ligar") { link.wake(h) }
+                                .buttonStyle(.bordered)
+                                .disabled(link.transport == .none)
+                        }
+                    }
+                    .onDelete { $0.map { link.knownHosts[$0] }.forEach(link.forget) }
+                } header: {
+                    Text("Ligar pela rede (Wake-on-LAN)")
+                } footer: {
+                    Text("O sinal sai do computador conectado agora, para os outros da mesma rede (o iOS só deixa apps com conta paga mandarem direto). O computador desligado precisa ter Wake-on-LAN ativo e, de preferência, estar no cabo de rede.")
                 }
 
                 Section("Aparência do trackpad") {
